@@ -8,12 +8,17 @@ export default function Method({ lang }: { lang: Lang }) {
     <section id="method" className="relative w-full overflow-hidden px-6 py-32 sm:px-8 sm:py-40">
       {/* Atmospheric horizon photo background */}
       <div className="pointer-events-none absolute inset-0">
-        <img
-          src="/images/horizon.png"
-          alt=""
-          className="h-full w-full object-cover opacity-50"
-          loading="lazy"
-        />
+        <picture>
+          <source media="(max-width: 768px)" srcSet="/images/horizon-sm.webp" type="image/webp" />
+          <source srcSet="/images/horizon.webp" type="image/webp" />
+          <img
+            src="/images/horizon.webp"
+            alt=""
+            loading="lazy"
+            decoding="async"
+            className="h-full w-full object-cover opacity-50"
+          />
+        </picture>
         <div
           className="absolute inset-0"
           style={{

@@ -11,6 +11,7 @@ import Footer from "./components/Footer";
 import MagneticCursor from "./components/MagneticCursor";
 import ScrollProgress from "./components/ScrollProgress";
 import EasterEgg from "./components/EasterEgg";
+import MobileBottomBar from "./components/MobileBottomBar";
 import type { Lang } from "./lib/i18n";
 
 export default function App() {
@@ -41,6 +42,7 @@ export default function App() {
         <Contact lang={lang} />
       </main>
       <Footer lang={lang} />
+      <MobileBottomBar lang={lang} />
       <EasterEgg lang={lang} />
     </div>
   );

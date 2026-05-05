@@ -28,12 +28,22 @@ export default function Origin({ lang }: { lang: Lang }) {
             transition={{ duration: 0.9, delay: 0.1, ease }}
             className="mt-10 overflow-hidden rounded-2xl border border-ink-800"
           >
-            <img
-              src="/images/hands.png"
-              alt=""
-              className="block h-full w-full object-cover transition duration-1000 hover:scale-105"
-              loading="lazy"
-            />
+            <picture>
+              <source media="(max-width: 768px)" srcSet="/images/hands-sm.webp" type="image/webp" />
+              <source srcSet="/images/hands.webp" type="image/webp" />
+              <img
+                src="/images/hands.webp"
+                alt=""
+                loading="lazy"
+                decoding="async"
+                className="block h-full w-full object-cover transition duration-1000 hover:scale-105"
+                style={{
+                  backgroundImage: "url(/images/hands-tiny.webp)",
+                  backgroundSize: "cover",
+                  backgroundPosition: "center",
+                }}
+              />
+            </picture>
           </motion.div>
         </div>
 

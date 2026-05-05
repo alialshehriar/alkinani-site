@@ -338,8 +338,8 @@ export default function AskTerminal({ lang }: { lang: Lang }) {
                 placeholder={PLACEHOLDER[lang]}
                 rows={1}
                 disabled={streaming}
-                className="min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-sm text-ink-100 placeholder:text-ink-600 focus:outline-none disabled:opacity-50 sm:text-base"
-                style={{ fontFamily: "inherit" }}
+                className="min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-base text-ink-100 placeholder:text-ink-600 focus:outline-none disabled:opacity-50"
+                style={{ fontFamily: "inherit", fontSize: "16px" }}
               />
               <button
                 type="submit"

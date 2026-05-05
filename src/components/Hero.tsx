@@ -23,14 +23,23 @@ export default function Hero({ lang }: { lang: Lang }) {
           style={{ y: imageY, scale: imageScale }}
           className="absolute inset-0"
         >
-          <img
-            src="/images/silhouette.png"
-            alt=""
-            className="h-full w-full object-cover"
-            style={{
-              objectPosition: isAr ? "20% center" : "80% center",
-            }}
-          />
+          <picture>
+            <source media="(max-width: 768px)" srcSet="/images/silhouette-sm.webp" type="image/webp" />
+            <source srcSet="/images/silhouette.webp" type="image/webp" />
+            <img
+              src="/images/silhouette.webp"
+              alt=""
+              fetchPriority="high"
+              decoding="async"
+              className="h-full w-full object-cover"
+              style={{
+                objectPosition: isAr ? "20% center" : "80% center",
+                backgroundImage: "url(/images/silhouette-tiny.webp)",
+                backgroundSize: "cover",
+                backgroundPosition: isAr ? "20% center" : "80% center",
+              }}
+            />
+          </picture>
         </motion.div>
 
         {/* Side-fade gradient — text in dark side */}
@@ -67,44 +76,44 @@ export default function Hero({ lang }: { lang: Lang }) {
       {/* Content */}
       <motion.div
         style={{ y: contentY, opacity: contentOpacity }}
-        className="relative z-10 mx-auto w-full max-w-7xl px-6 pb-20 pt-32 sm:px-10 sm:pb-0 sm:pt-0"
+        className="relative z-10 mx-auto w-full max-w-7xl px-5 pb-12 pt-28 sm:px-10 sm:pb-0 sm:pt-0"
       >
         <div className="max-w-2xl">
-          <p className="mb-6 flex items-center gap-3 text-xs uppercase tracking-[0.28em] text-ink-400 sm:mb-8 hero-shown" style={{ animationDelay: "0.15s" }}>
-            <span className="h-px w-8 bg-ember-500/70" />
-            {t(copy.hero.eyebrow, lang)}
+          <p className="mb-5 flex items-center gap-3 text-[11px] uppercase tracking-[0.28em] text-ink-400 sm:mb-8 sm:text-xs hero-shown" style={{ animationDelay: "0.15s" }}>
+            <span className="h-px w-7 bg-ember-500/70" />
+            <span className="line-clamp-1">{t(copy.hero.eyebrow, lang)}</span>
           </p>
 
           <h1
-            className="font-bold leading-[0.92] text-ink-100 hero-shown"
-            style={{ fontSize: "clamp(3rem, 9.5vw, 9rem)", animationDelay: "0.3s" }}
+            className="font-bold leading-[0.9] text-ink-100 hero-shown"
+            style={{ fontSize: "clamp(3.2rem, 14vw, 9rem)", animationDelay: "0.3s" }}
           >
             {t(copy.hero.name, lang)}
           </h1>
 
           <p
-            className="mt-4 font-en text-ink-400 hero-shown"
+            className="mt-3 font-en text-ink-400 hero-shown"
             style={{ fontSize: "clamp(0.85rem, 1.3vw, 1rem)", letterSpacing: "0.08em", animationDelay: "0.55s" }}
           >
             {t(copy.hero.transliteration, lang)}
           </p>
 
           <p
-            className="mt-10 max-w-2xl text-ink-100 hero-shown"
-            style={{ fontSize: "clamp(1.15rem, 1.9vw, 1.65rem)", lineHeight: 1.45, animationDelay: "0.7s" }}
+            className="mt-7 max-w-2xl text-ink-100 hero-shown sm:mt-10"
+            style={{ fontSize: "clamp(1.05rem, 2vw, 1.65rem)", lineHeight: 1.45, animationDelay: "0.7s" }}
           >
             {t(copy.hero.tagline, lang)}
           </p>
 
           <p
             className="mt-3 max-w-xl text-ink-400 hero-shown"
-            style={{ fontSize: "clamp(0.95rem, 1.3vw, 1.05rem)", lineHeight: 1.6, animationDelay: "0.85s" }}
+            style={{ fontSize: "clamp(0.92rem, 1.3vw, 1.05rem)", lineHeight: 1.6, animationDelay: "0.85s" }}
           >
             {t(copy.hero.sub, lang)}
           </p>
 
           <div
-            className="mt-12 flex flex-wrap items-center gap-x-6 gap-y-3 text-[11px] uppercase tracking-[0.22em] text-ink-400 hero-shown"
+            className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-3 text-[10px] uppercase tracking-[0.22em] text-ink-400 hero-shown sm:mt-12 sm:gap-x-6 sm:text-[11px]"
             style={{ animationDelay: "1.05s" }}
           >
             <span className="flex items-center gap-2">
@@ -112,12 +121,12 @@ export default function Hero({ lang }: { lang: Lang }) {
                 <span className="absolute inset-0 rounded-full bg-emerald-400/70 motion-safe:animate-ping" />
                 <span className="relative h-2 w-2 rounded-full bg-emerald-400" />
               </span>
-              <span>{lang === "ar" ? "ثلاثة أنظمة تشتغل الحين" : "Three systems running now"}</span>
+              <span>{lang === "ar" ? "ثلاثة أنظمة شغّالة" : "3 systems running"}</span>
             </span>
             <a
               href="#work"
               data-cursor="hover"
-              className="group inline-flex items-center gap-2 rounded-full border border-ink-700/70 bg-ink-950/40 px-4 py-2 text-[11px] tracking-[0.22em] text-ink-200 backdrop-blur-md transition hover:border-ember-500/60 hover:text-ember-500"
+              className="group inline-flex items-center gap-2 rounded-full border border-ink-700/70 bg-ink-950/40 px-3.5 py-2 text-[10px] tracking-[0.22em] text-ink-200 backdrop-blur-md transition hover:border-ember-500/60 hover:text-ember-500 sm:text-[11px]"
             >
               {lang === "ar" ? "اعرف الأعمال" : "See the work"}
               <span className="transition group-hover:translate-x-1">{lang === "ar" ? "←" : "→"}</span>
@@ -125,7 +134,7 @@ export default function Hero({ lang }: { lang: Lang }) {
           </div>
 
           <p
-            className="mt-6 text-[10px] uppercase tracking-[0.3em] text-ink-600 hero-shown"
+            className="mt-5 text-[10px] uppercase tracking-[0.3em] text-ink-600 hero-shown sm:mt-6"
             style={{ animationDelay: "1.35s" }}
           >
             {lang === "ar" ? "↗ المس البحر" : "↗ tap the sea"}
