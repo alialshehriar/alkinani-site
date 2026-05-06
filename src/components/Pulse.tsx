@@ -2,6 +2,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Lang } from "../lib/i18n";
 import { readPulseStats, recordPulse, type PulseStats } from "../lib/pulseStats";
+import { playCellTone, playSuccess, playFail } from "../lib/audio";
 
 type Phase = "idle" | "showing" | "input" | "round-complete" | "game-over";
 
@@ -113,6 +114,9 @@ export default function Pulse({ lang }: { lang: Lang }) {
   const [score, setScore] = useState(0);
   const [longestSeq, setLongestSeq] = useState(0);
   const [stats, setStats] = useState<PulseStats>({ bestLevel: 0, bestScore: 0, total: 0, bestSequence: 0 });
+  const [muted, setMuted] = useState(false);
+  const mutedRef = useRef(false);
+  useEffect(() => { mutedRef.current = muted; }, [muted]);
   const sequenceTimerRef = useRef<number[]>([]);
   const phaseRef = useRef<Phase>("idle");
 
@@ -138,6 +142,7 @@ export default function Pulse({ lang }: { lang: Lang }) {
         window.setTimeout(() => {
           if (phaseRef.current !== "showing") return;
           setActiveCell(cell);
+          if (!mutedRef.current) playCellTone(cell, Math.min(showMs, 320), 0.7);
           // soft haptic on cells lighting up
           if (typeof navigator !== "undefined" && (navigator as Navigator & { vibrate?: (p: number | number[]) => boolean }).vibrate) {
             try { (navigator as Navigator & { vibrate?: (p: number | number[]) => boolean }).vibrate?.(10); } catch { /* ignore */ }
@@ -196,6 +201,7 @@ export default function Pulse({ lang }: { lang: Lang }) {
     if (cell === expected) {
       setFeedback("correct");
       window.setTimeout(() => setFeedback(null), 180);
+      if (!mutedRef.current) playCellTone(cell, 220, 0.55);
       if (typeof navigator !== "undefined" && (navigator as Navigator & { vibrate?: (p: number | number[]) => boolean }).vibrate) {
         try { (navigator as Navigator & { vibrate?: (p: number | number[]) => boolean }).vibrate?.(8); } catch { /* ignore */ }
       }
@@ -205,6 +211,7 @@ export default function Pulse({ lang }: { lang: Lang }) {
         const roundScore = sequence.length * 10 + level * 5;
         setScore((s) => s + roundScore);
         setLongestSeq((m) => Math.max(m, sequence.length));
+        if (!mutedRef.current) playSuccess();
         setPhase("round-complete");
         window.setTimeout(() => startNextLevel(), 900);
       } else {
@@ -212,6 +219,7 @@ export default function Pulse({ lang }: { lang: Lang }) {
       }
     } else {
       setFeedback("wrong");
+      if (!mutedRef.current) playFail();
       if (typeof navigator !== "undefined" && (navigator as Navigator & { vibrate?: (p: number | number[]) => boolean }).vibrate) {
         try { (navigator as Navigator & { vibrate?: (p: number | number[]) => boolean }).vibrate?.([40, 60, 40]); } catch { /* ignore */ }
       }
@@ -346,14 +354,25 @@ export default function Pulse({ lang }: { lang: Lang }) {
           {/* Action area */}
           <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
             {phase === "idle" && (
-              <button
-                type="button"
-                data-cursor="hover"
-                onClick={startRun}
-                className="rounded-xl bg-gradient-to-br from-ember-500 to-tide-500 px-6 py-3 text-sm font-medium uppercase tracking-[0.18em] text-ink-950 transition hover:brightness-110"
-              >
-                {L.start}
-              </button>
+              <>
+                <button
+                  type="button"
+                  data-cursor="hover"
+                  onClick={startRun}
+                  className="rounded-xl bg-gradient-to-br from-ember-500 to-tide-500 px-6 py-3 text-sm font-medium uppercase tracking-[0.18em] text-ink-950 transition hover:brightness-110"
+                >
+                  {L.start}
+                </button>
+                <button
+                  type="button"
+                  data-cursor="hover"
+                  onClick={() => setMuted((m) => !m)}
+                  aria-label={muted ? "Unmute" : "Mute"}
+                  className="rounded-xl border border-ink-700/70 px-4 py-3 text-[11px] uppercase tracking-[0.18em] text-ink-300 transition hover:border-tide-500/60 hover:text-tide-400"
+                >
+                  {muted ? (isAr ? "🔇 بدون صوت" : "🔇 muted") : (isAr ? "🔊 صوت" : "🔊 sound")}
+                </button>
+              </>
             )}
             {phase === "game-over" && (
               <div className="w-full">

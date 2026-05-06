@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import type { Lang } from "../lib/i18n";
+import { speak, progressLevel, type SpeakHandle } from "../lib/tts";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
@@ -166,6 +167,8 @@ export default function AskTerminal({ lang }: { lang: Lang }) {
   const [error, setError] = useState<string | null>(null);
   const [resumeOffer, setResumeOffer] = useState<Msg[] | null>(null);
   const [voiceIdx, setVoiceIdx] = useState<number | null>(null);
+  const [voiceProgress, setVoiceProgress] = useState(0);
+  const voiceHandleRef = useRef<SpeakHandle | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -198,7 +201,7 @@ export default function AskTerminal({ lang }: { lang: Lang }) {
     setMessages([]);
     setError(null);
     setVoiceIdx(null);
-    speechSynthesis?.cancel?.();
+    voiceHandleRef.current?.stop?.(); voiceHandleRef.current = null;
     abortRef.current?.abort();
     setResumeOffer(null);
   }, [lang]);
@@ -206,7 +209,7 @@ export default function AskTerminal({ lang }: { lang: Lang }) {
   const send = async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || streaming) return;
-    speechSynthesis?.cancel?.();
+    voiceHandleRef.current?.stop?.(); voiceHandleRef.current = null;
     setVoiceIdx(null);
     setError(null);
     setResumeOffer(null);
@@ -254,7 +257,7 @@ export default function AskTerminal({ lang }: { lang: Lang }) {
 
   const reset = () => {
     abortRef.current?.abort();
-    speechSynthesis?.cancel?.();
+    voiceHandleRef.current?.stop?.(); voiceHandleRef.current = null;
     setMessages([]);
     setDraft("");
     setError(null);
@@ -264,24 +267,36 @@ export default function AskTerminal({ lang }: { lang: Lang }) {
     clearHistory();
   };
 
-  const playVoice = (idx: number) => {
+  const playVoice = async (idx: number) => {
     const m = messages[idx];
     if (!m || m.role !== "assistant" || !m.content.trim()) return;
     if (typeof window === "undefined" || !window.speechSynthesis) return;
+    // Toggle off if already playing this message
     if (voiceIdx === idx) {
-      speechSynthesis.cancel();
+      voiceHandleRef.current?.stop();
+      voiceHandleRef.current = null;
       setVoiceIdx(null);
+      setVoiceProgress(0);
       return;
     }
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(m.content);
-    u.lang = isAr ? "ar-SA" : "en-US";
-    u.rate = isAr ? 0.95 : 1.0;
-    u.pitch = 1.0;
-    u.onend = () => setVoiceIdx(null);
-    u.onerror = () => setVoiceIdx(null);
-    speechSynthesis.speak(u);
+    voiceHandleRef.current?.stop();
     setVoiceIdx(idx);
+    setVoiceProgress(0);
+    voiceHandleRef.current = await speak({
+      lang,
+      text: m.content,
+      onChunk: (i, total) => setVoiceProgress(progressLevel(i, total)),
+      onEnd: () => {
+        setVoiceIdx((cur) => (cur === idx ? null : cur));
+        setVoiceProgress(0);
+        voiceHandleRef.current = null;
+      },
+      onError: () => {
+        setVoiceIdx(null);
+        setVoiceProgress(0);
+        voiceHandleRef.current = null;
+      },
+    });
   };
 
   const acceptResume = () => {
@@ -438,6 +453,7 @@ export default function AskTerminal({ lang }: { lang: Lang }) {
                 lang={lang}
                 isStreaming={streaming && i === messages.length - 1 && m.role === "assistant"}
                 playing={voiceIdx === i}
+                playProgress={voiceIdx === i ? voiceProgress : 0}
                 onPlay={() => playVoice(i)}
                 playLabel={voiceIdx === i ? L.stop : L.play}
                 roleLabel={m.role === "user" ? L.question : L.answer}
@@ -529,6 +545,7 @@ function Bubble({
   lang,
   isStreaming,
   playing,
+  playProgress,
   onPlay,
   playLabel,
   roleLabel,
@@ -537,6 +554,7 @@ function Bubble({
   lang: Lang;
   isStreaming: boolean;
   playing: boolean;
+  playProgress: number;
   onPlay: () => void;
   playLabel: string;
   roleLabel: string;
@@ -550,7 +568,7 @@ function Bubble({
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className={`flex items-start gap-3 ${user ? "flex-row-reverse text-end" : ""} ${isAr ? "" : ""}`}
+      className={`flex items-start gap-3 ${user ? "flex-row-reverse text-end" : ""}`}
     >
       {/* avatar */}
       <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full">
@@ -559,9 +577,13 @@ function Bubble({
             {isAr ? "أنت" : "you"}
           </span>
         ) : (
-          <span className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-ember-500 to-tide-500 text-[10px] font-bold text-ink-950">
+          <motion.span
+            animate={playing ? { scale: [1, 1.08, 1] } : { scale: 1 }}
+            transition={playing ? { duration: 0.9, repeat: Infinity, ease: "easeInOut" } : { duration: 0.2 }}
+            className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-ember-500 to-tide-500 text-[10px] font-bold text-ink-950"
+          >
             ع
-          </span>
+          </motion.span>
         )}
       </span>
 
@@ -574,24 +596,54 @@ function Bubble({
               type="button"
               data-cursor="hover"
               onClick={onPlay}
-              className={`flex items-center gap-1 rounded-full border px-2 py-0.5 transition ${playing ? "border-ember-500/60 text-ember-500" : "border-ink-700 text-ink-400 hover:border-ember-500/40 hover:text-ember-500"}`}
+              className={`flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 transition ${playing ? "border-ember-500/60 text-ember-500 bg-ember-500/10" : "border-ink-700 text-ink-400 hover:border-ember-500/40 hover:text-ember-500"}`}
               aria-pressed={playing}
             >
-              <span aria-hidden>{playing ? "■" : "▶"}</span>
+              {playing ? (
+                <Waveform />
+              ) : (
+                <span aria-hidden>▶</span>
+              )}
               <span>{playLabel}</span>
             </button>
           )}
         </div>
         <div
-          className={`whitespace-pre-wrap break-words rounded-2xl px-4 py-3 ${user ? "bg-ember-500/10 text-ink-100 border border-ember-500/20" : "bg-ink-900/70 text-ink-100 border border-ink-700/70"}`}
+          className={`relative whitespace-pre-wrap break-words rounded-2xl px-4 py-3 ${user ? "bg-ember-500/10 text-ink-100 border border-ember-500/20" : "bg-ink-900/70 text-ink-100 border border-ink-700/70"}`}
           style={{ fontSize: "clamp(0.95rem, 1.3vw, 1.1rem)", lineHeight: 1.65 }}
         >
           {msg.content}
           {isStreaming && (
             <span className="ms-1 inline-block h-4 w-[2px] animate-pulse bg-tide-400 align-middle" />
           )}
+          {playing && (
+            <span className="pointer-events-none absolute inset-x-3 bottom-0 h-[2px] overflow-hidden rounded-full">
+              <span
+                className="block h-full bg-gradient-to-r from-ember-500 to-tide-500 transition-[width] duration-300"
+                style={{ width: `${Math.round(playProgress * 100)}%` }}
+              />
+            </span>
+          )}
         </div>
       </div>
     </motion.div>
+  );
+}
+
+function Waveform() {
+  return (
+    <span className="inline-flex items-end gap-[2px] h-3" aria-hidden>
+      {[0, 0.2, 0.4, 0.2, 0].map((d, i) => (
+        <span
+          key={i}
+          className="block w-[2px] rounded-full bg-current"
+          style={{
+            height: "60%",
+            animation: `voiceBars 0.9s ease-in-out ${d}s infinite`,
+          }}
+        />
+      ))}
+      <style>{`@keyframes voiceBars { 0%,100%{transform:scaleY(0.4)} 50%{transform:scaleY(1)} }`}</style>
+    </span>
   );
 }
