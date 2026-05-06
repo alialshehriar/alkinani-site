@@ -35,8 +35,16 @@ const STATIC_DIR = process.env.STATIC_DIR
   : path.join(__dirname, "public");
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5";
+const KIMI_KEY = process.env.KIMI_API_KEY;
+const KIMI_BASE_URL = process.env.KIMI_BASE_URL || "https://api.moonshot.ai/v1";
+const KIMI_MODEL = process.env.KIMI_MODEL || "kimi-k2-turbo-preview";
 const ELEVEN_KEY = process.env.ELEVENLABS_API_KEY;
 const DB_PATH = process.env.LEADERBOARD_DB || path.join(__dirname, "leaderboard.db");
+
+// Backend selection — prefer Anthropic if both are present (highest Najdi
+// quality), else Kimi K2 (256K context, OpenAI-compatible, cheap), else
+// graceful fallback message.
+const AI_BACKEND = ANTHROPIC_KEY ? "anthropic" : KIMI_KEY ? "kimi" : "none";
 
 // Load prompt files lazily once.
 const promptDir = path.join(__dirname, "prompts");
@@ -114,11 +122,136 @@ async function claudeText(system, userMsg, maxTokens = 700) {
   return blocks.map((b) => (b.type === "text" ? b.text : "")).join("").trim();
 }
 
+// Non-streaming Kimi (OpenAI-compatible chat-completions) returning text.
+async function kimiText(system, userMsg, maxTokens = 700) {
+  if (!KIMI_KEY) throw new Error("kimi_key_missing");
+  const r = await fetch(`${KIMI_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${KIMI_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: KIMI_MODEL,
+      max_tokens: maxTokens,
+      temperature: 0.55,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: userMsg },
+      ],
+    }),
+  });
+  if (!r.ok) {
+    const t = await r.text().catch(() => "");
+    throw new Error(`kimi_${r.status}: ${t.slice(0, 200)}`);
+  }
+  const j = await r.json();
+  return (j.choices?.[0]?.message?.content || "").trim();
+}
+
+// Unified text call — picks Anthropic or Kimi automatically.
+async function aiText(system, userMsg, maxTokens = 700) {
+  if (AI_BACKEND === "anthropic") return claudeText(system, userMsg, maxTokens);
+  if (AI_BACKEND === "kimi") return kimiText(system, userMsg, maxTokens);
+  throw new Error("no_ai_backend");
+}
+
 /* -------------------------- /api/chat (SSE) -------------------------- */
 
 app.get("/api/chat/health", (_req, res) => {
-  res.json({ ok: true, backend: ANTHROPIC_KEY ? "anthropic" : "none" });
+  res.json({ ok: true, backend: AI_BACKEND });
 });
+
+// Stream Anthropic SSE → our protocol.
+async function streamAnthropic(messages, send) {
+  const upstream = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": ANTHROPIC_KEY,
+      "anthropic-version": "2023-06-01",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: ANTHROPIC_MODEL,
+      max_tokens: 600,
+      stream: true,
+      system: PROMPTS.chat,
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+    }),
+  });
+  if (!upstream.ok || !upstream.body) {
+    const t = await upstream.text().catch(() => "");
+    send("error", { error: `anthropic ${upstream.status}: ${t.slice(0, 200)}` });
+    return;
+  }
+  const decoder = new TextDecoder();
+  let buf = "";
+  let evt = "";
+  for await (const chunk of upstream.body) {
+    buf += decoder.decode(chunk, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+    for (const line of lines) {
+      if (line.startsWith("event: ")) {
+        evt = line.slice(7).trim();
+      } else if (line.startsWith("data: ")) {
+        const data = line.slice(6).trim();
+        if (!data) continue;
+        try {
+          const p = JSON.parse(data);
+          if (evt === "content_block_delta" && p?.delta?.type === "text_delta") {
+            const text = p.delta.text || "";
+            if (text) send("delta", { delta: text });
+          }
+        } catch {}
+      }
+    }
+  }
+}
+
+// Stream Kimi (OpenAI-compatible SSE) → our protocol.
+async function streamKimi(messages, send) {
+  const upstream = await fetch(`${KIMI_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${KIMI_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: KIMI_MODEL,
+      max_tokens: 600,
+      temperature: 0.55,
+      stream: true,
+      messages: [
+        { role: "system", content: PROMPTS.chat },
+        ...messages.map((m) => ({ role: m.role, content: m.content })),
+      ],
+    }),
+  });
+  if (!upstream.ok || !upstream.body) {
+    const t = await upstream.text().catch(() => "");
+    send("error", { error: `kimi ${upstream.status}: ${t.slice(0, 200)}` });
+    return;
+  }
+  const decoder = new TextDecoder();
+  let buf = "";
+  for await (const chunk of upstream.body) {
+    buf += decoder.decode(chunk, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t.startsWith("data:")) continue;
+      const data = t.slice(5).trim();
+      if (!data || data === "[DONE]") continue;
+      try {
+        const p = JSON.parse(data);
+        const delta = p?.choices?.[0]?.delta?.content || "";
+        if (delta) send("delta", { delta });
+      } catch {}
+    }
+  }
+}
 
 app.post("/api/chat", async (req, res) => {
   const messages = (req.body?.messages || []).slice(-12);
@@ -137,7 +270,7 @@ app.post("/api/chat", async (req, res) => {
     res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
   };
 
-  if (!ANTHROPIC_KEY) {
+  if (AI_BACKEND === "none") {
     send("delta", {
       delta:
         "النظام شغّال — بس مفتاح الـAI ما هو متربط بعد. بإمكانك تواصلني على واتساب +966 59 998 8522.",
@@ -147,52 +280,8 @@ app.post("/api/chat", async (req, res) => {
   }
 
   try {
-    const upstream = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": ANTHROPIC_KEY,
-        "anthropic-version": "2023-06-01",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: ANTHROPIC_MODEL,
-        max_tokens: 600,
-        stream: true,
-        system: PROMPTS.chat,
-        messages: messages.map((m) => ({ role: m.role, content: m.content })),
-      }),
-    });
-
-    if (!upstream.ok || !upstream.body) {
-      const t = await upstream.text().catch(() => "");
-      send("error", { error: `anthropic ${upstream.status}: ${t.slice(0, 200)}` });
-      return res.end();
-    }
-
-    // Parse Anthropic SSE → emit our protocol.
-    const decoder = new TextDecoder();
-    let buf = "";
-    let evt = "";
-    for await (const chunk of upstream.body) {
-      buf += decoder.decode(chunk, { stream: true });
-      const lines = buf.split("\n");
-      buf = lines.pop() ?? "";
-      for (const line of lines) {
-        if (line.startsWith("event: ")) {
-          evt = line.slice(7).trim();
-        } else if (line.startsWith("data: ")) {
-          const data = line.slice(6).trim();
-          if (!data) continue;
-          try {
-            const p = JSON.parse(data);
-            if (evt === "content_block_delta" && p?.delta?.type === "text_delta") {
-              const text = p.delta.text || "";
-              if (text) send("delta", { delta: text });
-            }
-          } catch {}
-        }
-      }
-    }
+    if (AI_BACKEND === "anthropic") await streamAnthropic(messages, send);
+    else if (AI_BACKEND === "kimi") await streamKimi(messages, send);
     send("done", { reason: "done" });
     res.end();
   } catch (err) {
@@ -234,10 +323,10 @@ app.post("/api/profile", async (req, res) => {
     ? `قراراتك السبعة:\n${picks.map((p, i) => `${i + 1}. ${p.prompt}\n   اخترت: ${p.choice}  (axis=${p.axis}, side=${p.side})`).join("\n")}\n\nالميل بالمحاور: ${JSON.stringify(leans)}\n\nاكتب القراءة.`
     : `your 7 picks:\n${picks.map((p, i) => `${i + 1}. ${p.prompt}\n   chose: ${p.choice}  (axis=${p.axis}, side=${p.side})`).join("\n")}\n\nlean per axis: ${JSON.stringify(leans)}\n\nwrite the reading.`;
 
-  if (!ANTHROPIC_KEY) return res.json(profileFallback(lang));
+  if (AI_BACKEND === "none") return res.json(profileFallback(lang));
 
   try {
-    const raw = await claudeText(lang === "ar" ? PROMPTS.profile_ar : PROMPTS.profile_en, userMsg, 700);
+    const raw = await aiText(lang === "ar" ? PROMPTS.profile_ar : PROMPTS.profile_en, userMsg, 700);
     const parsed = safeJson(raw);
     if (parsed && typeof parsed === "object" && "archetype" in parsed) return res.json(parsed);
     return res.json(profileFallback(lang));
@@ -269,10 +358,10 @@ app.post("/api/idea", async (req, res) => {
   const idea = String(req.body?.idea || "").trim();
   if (!idea) return jsonError(res, "idea required", 400);
   if (idea.length > 600) return jsonError(res, "idea too long (max 600)", 400);
-  if (!ANTHROPIC_KEY) return res.json(ideaFallback(idea));
+  if (AI_BACKEND === "none") return res.json(ideaFallback(idea));
 
   try {
-    const raw = await claudeText(PROMPTS.idea, idea, 2200);
+    const raw = await aiText(PROMPTS.idea, idea, 2200);
     const parsed = safeJson(raw);
     if (parsed && typeof parsed === "object" && "scores" in parsed) return res.json(parsed);
     return res.json(ideaFallback(idea, raw));
@@ -301,7 +390,7 @@ app.post("/api/pressure", async (req, res) => {
     if (!idea) return jsonError(res, "idea required", 400);
     if (idea.length > 600) return jsonError(res, "idea too long", 400);
     const isAr = /[؀-ۿ]/.test(idea);
-    if (!ANTHROPIC_KEY) {
+    if (AI_BACKEND === "none") {
       return res.json({
         critique: isAr
           ? "ما تركت مساحة لاعتراض محدد. أعد صياغة الفكرة بشكل أوضح."
@@ -309,7 +398,7 @@ app.post("/api/pressure", async (req, res) => {
       });
     }
     try {
-      const critique = await claudeText(PROMPTS.pressure_critic, idea, 220);
+      const critique = await aiText(PROMPTS.pressure_critic, idea, 220);
       return res.json({
         critique: critique || (isAr
           ? "ما تركت مساحة لاعتراض محدد. أعد صياغة الفكرة بشكل أوضح."
@@ -330,7 +419,7 @@ app.post("/api/pressure", async (req, res) => {
       ? `الفكرة: ${idea}\n\nالاعتراض: ${critique}\n\nرد المؤسس: ${rebuttal}\n\nاحكم.`
       : `Idea: ${idea}\n\nObjection: ${critique}\n\nFounder rebuttal: ${rebuttal}\n\nJudge.`;
 
-    if (!ANTHROPIC_KEY) {
+    if (AI_BACKEND === "none") {
       return res.json({
         score: 50, grade: "C",
         verdict: isAr ? "ما قدر النظام يحكم. جرب إجابة أوضح." : "Couldn't judge. Try a sharper rebuttal.",
@@ -341,7 +430,7 @@ app.post("/api/pressure", async (req, res) => {
     }
 
     try {
-      const raw = await claudeText(PROMPTS.pressure_judge, userMsg, 400);
+      const raw = await aiText(PROMPTS.pressure_judge, userMsg, 400);
       const parsed = safeJson(raw);
       if (!parsed || typeof parsed.score !== "number") {
         return res.json({
@@ -471,6 +560,7 @@ db.exec(`
     name        TEXT NOT NULL,
     score       INTEGER NOT NULL,
     meta        TEXT,
+    country     TEXT,
     ip_hash     TEXT,
     created_at  INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000)
   );
@@ -478,19 +568,23 @@ db.exec(`
     ON scores(game, score DESC, created_at ASC);
   CREATE INDEX IF NOT EXISTS idx_scores_iphash_created
     ON scores(ip_hash, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_scores_game_created
+    ON scores(game, created_at DESC);
 `);
+// Add `country` column to existing tables (no-op if already there).
+try { db.exec("ALTER TABLE scores ADD COLUMN country TEXT"); } catch {}
 
 const VALID_GAMES = new Set(["sprint", "reflex", "pressure"]);
 // Per-game caps to short-circuit obvious cheats. Tune as the games evolve.
 const GAME_MAX = { sprint: 2000, reflex: 100, pressure: 100 };
 
 const insertScore = db.prepare(
-  "INSERT INTO scores (game, name, score, meta, ip_hash) VALUES (?, ?, ?, ?, ?)"
+  "INSERT INTO scores (game, name, score, meta, country, ip_hash) VALUES (?, ?, ?, ?, ?, ?)"
 );
 const topScoresStmt = db.prepare(
   // Top distinct (name, score) per game - keep ALL submissions but the leaderboard
   // shows the BEST score per name to discourage spam.
-  `SELECT name, MAX(score) AS score, MAX(created_at) AS created_at, MAX(meta) AS meta
+  `SELECT name, MAX(score) AS score, MAX(created_at) AS created_at, MAX(meta) AS meta, MAX(country) AS country
    FROM scores
    WHERE game = ?
    GROUP BY name
@@ -507,6 +601,68 @@ const rankStmt = db.prepare(
     SELECT MAX(score) AS s FROM scores WHERE game = ? GROUP BY name
   ) WHERE s > ?`
 );
+const liveStatsStmt = db.prepare(
+  // Last-24h stats: distinct players + total runs + last submission timestamp.
+  `SELECT
+     COUNT(DISTINCT name) AS players,
+     COUNT(*) AS runs,
+     MAX(created_at) AS lastAt
+   FROM scores
+   WHERE game = ? AND created_at > ?`
+);
+const recentRunsStmt = db.prepare(
+  // Recent submissions for the live activity ticker (last N within window).
+  `SELECT name, score, country, created_at
+   FROM scores
+   WHERE game = ? AND created_at > ?
+   ORDER BY created_at DESC
+   LIMIT ?`
+);
+
+// In-memory IP→country cache (24h TTL). Avoids hammering the geoip endpoint.
+const countryCache = new Map(); // ip -> { country, expiresAt }
+const COUNTRY_TTL = 24 * 3600 * 1000;
+
+function clientIp(req) {
+  return (
+    req.headers["cf-connecting-ip"] ||
+    req.headers["x-real-ip"] ||
+    (req.headers["x-forwarded-for"] || "").toString().split(",")[0].trim() ||
+    req.socket.remoteAddress ||
+    ""
+  ).toString().trim();
+}
+
+async function lookupCountry(ip) {
+  if (!ip || ip === "127.0.0.1" || ip === "::1") return null;
+  const cached = countryCache.get(ip);
+  if (cached && cached.expiresAt > Date.now()) return cached.country;
+  try {
+    // country.is is free, no key, 100 req/min — plenty for our scale.
+    const r = await fetch(`https://api.country.is/${encodeURIComponent(ip)}`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const c = (j.country || "").toUpperCase();
+    if (!/^[A-Z]{2}$/.test(c)) return null;
+    countryCache.set(ip, { country: c, expiresAt: Date.now() + COUNTRY_TTL });
+    return c;
+  } catch {
+    return null;
+  }
+}
+
+async function getCountry(req) {
+  // Path 1: Cloudflare adds CF-IPCountry on every proxied request (free on Free plan).
+  // The pages.dev catch-all proxy forwards it as x-forwarded-country.
+  const headerCountry = (req.headers["cf-ipcountry"] || req.headers["x-forwarded-country"] || "").toString().toUpperCase();
+  if (/^[A-Z]{2}$/.test(headerCountry) && headerCountry !== "XX" && headerCountry !== "T1") {
+    return headerCountry;
+  }
+  // Path 2: direct nginx hit — look up via free geoip with cache.
+  return lookupCountry(clientIp(req));
+}
 
 function hashIP(req) {
   const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").toString().split(",")[0].trim();
@@ -532,15 +688,37 @@ app.get("/api/leaderboard", (req, res) => {
   const rows = topScoresStmt.all(game, limit).map((r) => ({
     name: r.name,
     score: r.score,
+    country: r.country || null,
     createdAt: r.created_at,
     meta: r.meta ? safeJson(r.meta) : null,
   }));
   const total = totalSubmissionsStmt.get(game).n;
+
+  // Live activity (last 24h): players, runs, and a small ticker of recent submits.
+  const since = Date.now() - 86_400_000;
+  const live = liveStatsStmt.get(game, since);
+  const recent = recentRunsStmt.all(game, since, 5).map((r) => ({
+    name: r.name,
+    score: r.score,
+    country: r.country || null,
+    createdAt: r.created_at,
+  }));
+
   res.set("Cache-Control", "public, max-age=10");
-  res.json({ game, total, top: rows });
+  res.json({
+    game,
+    total,
+    top: rows,
+    live: {
+      players24h: live.players || 0,
+      runs24h: live.runs || 0,
+      lastAt: live.lastAt || null,
+      recent,
+    },
+  });
 });
 
-app.post("/api/leaderboard", (req, res) => {
+app.post("/api/leaderboard", async (req, res) => {
   const body = req.body || {};
   const game = String(body.game || "").toLowerCase();
   if (!VALID_GAMES.has(game)) return jsonError(res, "unknown game", 400);
@@ -570,10 +748,26 @@ app.post("/api/leaderboard", (req, res) => {
     } catch { metaStr = null; }
   }
 
-  insertScore.run(game, name, score, metaStr, ipHash);
+  // Soft anti-cheat: meta-based plausibility check for sprint (correct & wrong
+  // counts must roughly justify the score). 60s game, max ~30 questions.
+  if (game === "sprint" && body.meta && typeof body.meta === "object") {
+    const correct = Number(body.meta.correct) || 0;
+    const wrong = Number(body.meta.wrong) || 0;
+    if (correct < 0 || correct > 60 || wrong < 0 || wrong > 60) {
+      return jsonError(res, "implausible meta for sprint", 400);
+    }
+    // Worst case max: 60 questions all correct + max speed bonus + max streak.
+    const upperBound = correct * (10 + 5 + 10);
+    if (score > upperBound + 50) {
+      return jsonError(res, "score exceeds plausible upper bound", 400);
+    }
+  }
+
+  const country = await getCountry(req);
+  insertScore.run(game, name, score, metaStr, country, ipHash);
   const rank = rankStmt.get(game, score).rank;
   const total = totalSubmissionsStmt.get(game).n;
-  res.json({ ok: true, game, name, score, rank, total });
+  res.json({ ok: true, game, name, score, rank, total, country });
 });
 
 /* -------------------------- Static + SPA fallback -------------------------- */
@@ -598,7 +792,7 @@ app.get(/^(?!\/api\/).*/, (_req, res, next) => {
 app.listen(PORT, "127.0.0.1", () => {
   console.log(`alkinani-server listening on 127.0.0.1:${PORT}`);
   console.log(`  static: ${STATIC_DIR}`);
-  console.log(`  anthropic: ${ANTHROPIC_KEY ? "configured" : "MISSING (will fallback)"}`);
+  console.log(`  ai backend: ${AI_BACKEND}${AI_BACKEND === "kimi" ? ` (${KIMI_MODEL})` : AI_BACKEND === "anthropic" ? ` (${ANTHROPIC_MODEL})` : ""}`);
   console.log(`  elevenlabs: ${ELEVEN_KEY ? "configured" : "missing (using gTTS)"}`);
   console.log(`  leaderboard db: ${DB_PATH}`);
 });

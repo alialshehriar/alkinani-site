@@ -2,11 +2,15 @@ import { motion, AnimatePresence } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Lang } from "../lib/i18n";
 import {
+  countryFlag,
   fetchLeaderboard,
   getStoredName,
+  relativeTime,
   storeName,
   submitScore,
   type LeaderboardEntry,
+  type LiveStats,
+  type RecentEntry,
 } from "../lib/leaderboard";
 
 type Props = {
@@ -39,12 +43,21 @@ const COPY = {
     name: "الاسم",
     rankPrefix: "#",
     error: "خطأ:",
-    tryAgain: "حاول مرة ثانية",
     refresh: "تحديث",
+    livePlayers: "لاعب نشط",
+    liveRuns: "محاولة",
+    last24h: "آخر 24 ساعة",
+    activity: "آخر النتائج",
+    shareTitle: "شارك نتيجتك",
+    shareText: (score: number, rank: number) =>
+      `سجلت ${score} نقطة في تحدي السرعة عند علي الكناني! المركز #${rank} عالمياً 🔥\nتحدّاني:`,
+    shareBtn: "نشر على X",
+    copyLink: "انسخ الرابط",
+    copied: "تم النسخ!",
   },
   en: {
     title: "Global Leaderboard",
-    subtitle: "Challenge your friends. Beat the high score and join the list of champions.",
+    subtitle: "Challenge your friends. Beat the record and join the champions list.",
     empty: "Nobody yet. Be the first.",
     nameLabel: "Your name or handle (shown publicly)",
     namePlaceholder: "e.g., Abu Saeed",
@@ -58,10 +71,21 @@ const COPY = {
     name: "Name",
     rankPrefix: "#",
     error: "Error:",
-    tryAgain: "Try again",
     refresh: "Refresh",
+    livePlayers: "active players",
+    liveRuns: "runs",
+    last24h: "last 24h",
+    activity: "Recent runs",
+    shareTitle: "Share your score",
+    shareText: (score: number, rank: number) =>
+      `I just scored ${score} on Ali Alkinani's speed challenge — rank #${rank} worldwide 🔥\nbeat me:`,
+    shareBtn: "Share on X",
+    copyLink: "Copy link",
+    copied: "Copied!",
   },
 } as const;
+
+const SHARE_URL = "https://alkinani.live/#lab";
 
 function fmtScore(n: number) {
   return new Intl.NumberFormat(undefined).format(Math.max(0, n));
@@ -80,13 +104,15 @@ export default function Leaderboard({
   const showLimit = limit ?? (variant === "full" ? 10 : 5);
 
   const [top, setTop] = useState<LeaderboardEntry[]>([]);
+  const [live, setLive] = useState<LiveStats | null>(null);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [name, setName] = useState(() => getStoredName());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [submitted, setSubmitted] = useState<{ rank: number; total: number } | null>(null);
+  const [submitted, setSubmitted] = useState<{ rank: number; total: number; score: number } | null>(null);
   const [highlightName, setHighlightName] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   const refresh = useCallback(async () => {
@@ -97,6 +123,7 @@ export default function Leaderboard({
     try {
       const data = await fetchLeaderboard(game, showLimit, ac.signal);
       setTop(data.top);
+      setLive(data.live || null);
       setTotal(data.total);
     } catch {
       /* keep last good state on transient error */
@@ -107,11 +134,18 @@ export default function Leaderboard({
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  // Auto-refresh live activity every 30s while mounted (cheap — 10s server cache).
+  useEffect(() => {
+    const id = window.setInterval(refresh, 30_000);
+    return () => window.clearInterval(id);
+  }, [refresh]);
+
   // Reset submit state whenever a new pending score arrives.
   useEffect(() => {
     setSubmitted(null);
     setError(null);
     setHighlightName(null);
+    setCopied(false);
   }, [pendingScore?.score]);
 
   const onSubmit = async () => {
@@ -131,10 +165,9 @@ export default function Leaderboard({
         meta: pendingScore.meta,
       });
       storeName(trimmed);
-      setSubmitted({ rank: r.rank, total: r.total });
+      setSubmitted({ rank: r.rank, total: r.total, score: r.score });
       setHighlightName(trimmed);
       onSubmitted?.(r.rank, r.total);
-      // Refresh shortly after so the new entry appears.
       window.setTimeout(refresh, 250);
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
@@ -143,12 +176,29 @@ export default function Leaderboard({
     }
   };
 
+  const handleShare = () => {
+    if (!submitted) return;
+    const text = L.shareText(submitted.score, submitted.rank);
+    const intent = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text + "\n" + SHARE_URL)}`;
+    window.open(intent, "_blank", "noopener,noreferrer");
+  };
+
+  const handleCopy = async () => {
+    if (!submitted) return;
+    const text = L.shareText(submitted.score, submitted.rank) + "\n" + SHARE_URL;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch { /* clipboard unavailable */ }
+  };
+
   const showForm = !!pendingScore && !submitted;
 
   return (
     <div className="rounded-2xl border border-ink-800 bg-ink-900/40 p-4 sm:p-6" dir={isAr ? "rtl" : "ltr"}>
       <div className="flex items-baseline justify-between gap-3">
-        <div>
+        <div className="min-w-0 flex-1">
           <div className="text-[10px] uppercase tracking-[0.22em] text-ember-500">
             {L.title}
           </div>
@@ -167,7 +217,28 @@ export default function Leaderboard({
         </button>
       </div>
 
-      {/* Submit form (only shown when there's a pending score) */}
+      {/* Live stats strip */}
+      {live && (live.players24h > 0 || live.runs24h > 0) && (
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-ink-800/60 bg-ink-950/40 px-3 py-2 text-[11px]">
+          <span className="flex items-center gap-1.5">
+            <span className="relative inline-flex h-1.5 w-1.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            </span>
+            <span className="num-display text-emerald-300">{live.players24h}</span>
+            <span className="text-ink-500">{L.livePlayers}</span>
+          </span>
+          <span className="text-ink-700">·</span>
+          <span>
+            <span className="num-display text-ink-200">{live.runs24h}</span>{" "}
+            <span className="text-ink-500">{L.liveRuns}</span>
+          </span>
+          <span className="text-ink-700 hidden sm:inline">·</span>
+          <span className="hidden text-ink-500 sm:inline">{L.last24h}</span>
+        </div>
+      )}
+
+      {/* Submit form */}
       <AnimatePresence>
         {showForm && (
           <motion.form
@@ -211,20 +282,41 @@ export default function Leaderboard({
         )}
       </AnimatePresence>
 
-      {/* Confirmation */}
+      {/* Submitted confirmation + share */}
       <AnimatePresence>
         {submitted && (
           <motion.div
             key="confirm"
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="mt-4 rounded-xl border border-emerald-400/30 bg-emerald-400/5 p-3 text-xs text-emerald-200 sm:text-sm"
+            className="mt-4 rounded-xl border border-emerald-400/30 bg-gradient-to-br from-emerald-400/10 to-tide-500/10 p-4"
           >
-            {L.submitted}{" "}
-            <strong className="num-display text-emerald-300">
-              {L.rankPrefix}{submitted.rank}
-            </strong>{" "}
-            {L.of} {submitted.total}
+            <div className="text-xs text-emerald-200 sm:text-sm">
+              {L.submitted}{" "}
+              <strong className="num-display text-emerald-300">
+                {L.rankPrefix}{submitted.rank}
+              </strong>{" "}
+              <span className="text-ink-400">{L.of} {submitted.total}</span>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleShare}
+                className="inline-flex items-center gap-2 rounded-lg bg-ink-100 px-3 py-2 text-[11px] font-medium uppercase tracking-[0.18em] text-ink-950 transition hover:bg-white"
+              >
+                <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="currentColor">
+                  <path d="M18.244 2H21l-6.52 7.45L22 22h-6.79l-4.95-6.46L4.6 22H1.84l6.97-7.96L1 2h6.93l4.49 5.93L18.24 2zm-1.18 18h1.74L7.05 4H5.2l11.86 16z" />
+                </svg>
+                {L.shareBtn}
+              </button>
+              <button
+                type="button"
+                onClick={handleCopy}
+                className="inline-flex items-center gap-2 rounded-lg border border-ink-700 bg-ink-950 px-3 py-2 text-[11px] font-medium uppercase tracking-[0.18em] text-ink-300 transition hover:border-ink-500"
+              >
+                {copied ? L.copied : L.copyLink}
+              </button>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -246,6 +338,7 @@ export default function Leaderboard({
             const isYou = highlightName && row.name === highlightName;
             const rank = i + 1;
             const medal = rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : null;
+            const flag = countryFlag(row.country);
             return (
               <motion.li
                 key={`${row.name}-${row.score}-${i}`}
@@ -260,8 +353,11 @@ export default function Leaderboard({
                 <div className="text-center text-[11px] text-ink-500">
                   {medal || `#${rank}`}
                 </div>
-                <div className={isYou ? "font-medium text-ember-400" : "text-ink-200"}>
-                  <span className="truncate">{row.name}</span>
+                <div className={`min-w-0 ${isYou ? "font-medium text-ember-400" : "text-ink-200"}`}>
+                  <span className="inline-flex items-center gap-1.5">
+                    {flag && <span aria-label={row.country || ""} className="text-base">{flag}</span>}
+                    <span className="truncate">{row.name}</span>
+                  </span>
                   {isYou && (
                     <span className="ms-2 rounded-full bg-ember-500/20 px-2 py-0.5 text-[9px] uppercase tracking-[0.18em] text-ember-300">
                       {L.you}
@@ -280,6 +376,38 @@ export default function Leaderboard({
       {total > showLimit && (
         <div className="mt-2 text-end text-[10px] text-ink-500">
           {total} {isAr ? "محاولة مسجّلة" : "runs recorded"}
+        </div>
+      )}
+
+      {/* Live activity ticker */}
+      {variant === "full" && live && live.recent.length > 0 && (
+        <div className="mt-4 rounded-xl border border-ink-800/60 bg-ink-950/30 p-3">
+          <div className="text-[9px] uppercase tracking-[0.22em] text-ink-500">
+            {L.activity}
+          </div>
+          <ol className="mt-2 space-y-1.5 text-xs">
+            {live.recent.map((r: RecentEntry, i) => {
+              const flag = countryFlag(r.country);
+              return (
+                <motion.li
+                  key={`${r.name}-${r.createdAt}-${i}`}
+                  initial={{ opacity: 0, x: isAr ? 6 : -6 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: i * 0.05 }}
+                  className="flex items-center justify-between gap-3 text-ink-400"
+                >
+                  <span className="inline-flex items-center gap-1.5 truncate">
+                    {flag && <span className="text-sm">{flag}</span>}
+                    <span className="truncate text-ink-200">{r.name}</span>
+                    <span className="num-display text-ember-400">+{fmtScore(r.score)}</span>
+                  </span>
+                  <span className="shrink-0 text-[10px] text-ink-500">
+                    {relativeTime(r.createdAt, lang)}
+                  </span>
+                </motion.li>
+              );
+            })}
+          </ol>
         </div>
       )}
     </div>

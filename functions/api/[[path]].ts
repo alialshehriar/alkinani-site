@@ -24,6 +24,10 @@ export const onRequest: PagesFunction = async (context) => {
   if (clientIp && !fwdHeaders.has("x-forwarded-for")) {
     fwdHeaders.set("x-forwarded-for", clientIp);
   }
+  // Forward Cloudflare's free GeoIP header so the leaderboard can attach a
+  // country flag to each submitted score.
+  const country = incoming.headers.get("cf-ipcountry");
+  if (country) fwdHeaders.set("x-forwarded-country", country);
 
   let upstream: Response;
   try {

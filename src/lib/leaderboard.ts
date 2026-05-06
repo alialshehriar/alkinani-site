@@ -3,14 +3,30 @@
 export type LeaderboardEntry = {
   name: string;
   score: number;
+  country?: string | null;
   createdAt: number;
   meta?: Record<string, unknown> | null;
+};
+
+export type RecentEntry = {
+  name: string;
+  score: number;
+  country?: string | null;
+  createdAt: number;
+};
+
+export type LiveStats = {
+  players24h: number;
+  runs24h: number;
+  lastAt: number | null;
+  recent: RecentEntry[];
 };
 
 export type LeaderboardResponse = {
   game: string;
   total: number;
   top: LeaderboardEntry[];
+  live?: LiveStats;
 };
 
 export type SubmitResponse = {
@@ -20,7 +36,31 @@ export type SubmitResponse = {
   score: number;
   rank: number;
   total: number;
+  country?: string | null;
 };
+
+/** Convert ISO 3166 alpha-2 to flag emoji ("SA" -> "🇸🇦"). */
+export function countryFlag(code?: string | null): string {
+  if (!code || !/^[A-Z]{2}$/.test(code)) return "";
+  return String.fromCodePoint(...[...code].map((c) => 127397 + c.charCodeAt(0)));
+}
+
+export function relativeTime(ts: number, lang: "ar" | "en" = "ar"): string {
+  const diff = Math.max(0, Date.now() - ts);
+  const sec = Math.floor(diff / 1000);
+  const min = Math.floor(sec / 60);
+  const hr = Math.floor(min / 60);
+  if (lang === "ar") {
+    if (sec < 60) return "الآن";
+    if (min < 60) return `قبل ${min} دقيقة`;
+    if (hr < 24) return `قبل ${hr} ساعة`;
+    return `قبل ${Math.floor(hr / 24)} يوم`;
+  }
+  if (sec < 60) return "now";
+  if (min < 60) return `${min}m ago`;
+  if (hr < 24) return `${hr}h ago`;
+  return `${Math.floor(hr / 24)}d ago`;
+}
 
 export type SubmitError = { error: string };
 
