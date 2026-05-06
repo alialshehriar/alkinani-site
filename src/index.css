@@ -42,7 +42,16 @@
   }
   ::selection { background: var(--color-ember-500); color: var(--color-ink-950); }
   h1, h2, h3, h4 { letter-spacing: -0.02em; }
-  html[dir="rtl"] h1, html[dir="rtl"] h2, html[dir="rtl"] h3 { letter-spacing: -0.01em; }
+  /* Arabic letters MUST join cleanly. ANY letter-spacing tweak (positive
+     or negative) breaks the joining and the glyphs either overlap or
+     scatter. Reset for everything inside an RTL document — except for
+     transliterations explicitly marked `font-en` and monospace blocks. */
+  html[dir="rtl"]
+    *:not(.font-en):not(.font-mono):not([class*="font-en"]):not([class*="font-mono"]):not(svg):not(svg *):not(input):not(textarea) {
+    letter-spacing: normal !important;
+  }
+  /* keep tabular-nums on numeric displays */
+  html[dir="rtl"] .num-display { letter-spacing: normal !important; }
 }
 
 @layer utilities {
