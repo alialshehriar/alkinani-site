@@ -137,7 +137,7 @@ export default function Ventures({ lang }: { lang: Lang }) {
             transition={{ duration: 0.7 }}
             className="text-xs uppercase tracking-[0.3em] text-ember-500 lg:col-span-4"
           >
-            <span className="me-3 align-middle text-ink-600">/02</span>
+            <span className="me-3 align-middle text-ink-600">/03</span>
             {t(copy.ventures.section, lang)}
           </motion.p>
           <motion.h2

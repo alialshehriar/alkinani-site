@@ -37,7 +37,7 @@ export default function Method({ lang }: { lang: Lang }) {
             transition={{ duration: 0.7 }}
             className="text-xs uppercase tracking-[0.3em] text-ember-500 lg:col-span-4"
           >
-            <span className="me-3 align-middle text-ink-600">/03</span>
+            <span className="me-3 align-middle text-ink-600">/05</span>
             {t(copy.method.section, lang)}
           </motion.p>
           <div className="lg:col-span-8">

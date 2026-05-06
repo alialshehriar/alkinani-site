@@ -23,7 +23,7 @@ export default function Contact({ lang }: { lang: Lang }) {
             transition={{ duration: 0.7 }}
             className="text-xs uppercase tracking-[0.3em] text-ember-500 lg:col-span-4"
           >
-            <span className="me-3 align-middle text-ink-600">/06</span>
+            <span className="me-3 align-middle text-ink-600">/07</span>
             {t(copy.contact.section, lang)}
           </motion.p>
           <div className="lg:col-span-8">

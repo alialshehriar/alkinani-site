@@ -36,10 +36,10 @@ export default function App() {
       <main>
         <Hero lang={lang} />
         <Origin lang={lang} />
-        <Ventures lang={lang} />
-        <Method lang={lang} />
         <PlayLab lang={lang} />
+        <Ventures lang={lang} />
         <AskTerminal lang={lang} />
+        <Method lang={lang} />
         <Stack lang={lang} />
         <Contact lang={lang} />
       </main>

@@ -9,7 +9,7 @@ type Tab = "reflex" | "sprint" | "pulse";
 
 const COPY = {
   ar: {
-    eyebrow: "/04 العب",
+    eyebrow: "/02 العب",
     title: "ثلاث ألعاب. كل وحدة تشتغل في الدماغ من زاوية مختلفة.",
     sub: "Reflex Lab يكشف نمطك كمؤسس. Tech Sprint يختبر سرعة معرفتك. Pulse يدرّب ذاكرتك العاملة. الثلاث مجاني، بدون تسجيل، يشتغلون على الجوال.",
     tabs: {
@@ -19,7 +19,7 @@ const COPY = {
     },
   },
   en: {
-    eyebrow: "/04 play",
+    eyebrow: "/02 play",
     title: "three games. each one trains the brain from a different angle.",
     sub: "Reflex Lab maps your founder DNA. Tech Sprint tests recall speed. Pulse trains visual working memory. all three free, no signup, mobile-first.",
     tabs: {

@@ -137,7 +137,87 @@ export interface SpeakOptions {
   onError?: (err: string) => void;
 }
 
+/**
+ * Try the server TTS endpoint first (ElevenLabs near-human voice).
+ * If it returns audio, play via HTMLAudioElement (much higher quality than browser synth).
+ * If it returns 204 (no key configured) or any error, returns null so caller falls back.
+ */
+async function tryServerTTS(opts: SpeakOptions): Promise<SpeakHandle | null> {
+  if (typeof window === "undefined") return null;
+  try {
+    const res = await fetch("/api/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: cleanForSpeech(opts.text), lang: opts.lang }),
+    });
+    if (res.status === 204) return null; // backend signaled fallback
+    if (!res.ok) return null;
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.startsWith("audio/")) return null;
+    const blob = await res.blob();
+    if (blob.size === 0) return null;
+    const objUrl = URL.createObjectURL(blob);
+    const audio = new Audio(objUrl);
+    audio.preload = "auto";
+
+    let cancelled = false;
+    const cleanup = () => {
+      try { audio.pause(); } catch { /* ignore */ }
+      URL.revokeObjectURL(objUrl);
+    };
+
+    audio.addEventListener("playing", () => {
+      if (!cancelled) opts.onStart?.();
+    });
+
+    audio.addEventListener("timeupdate", () => {
+      if (cancelled || !audio.duration || !isFinite(audio.duration)) return;
+      const pct = audio.currentTime / audio.duration;
+      // Map continuous progress to 'chunks' the UI already expects (10 buckets).
+      const buckets = 10;
+      const chunkIdx = Math.min(buckets - 1, Math.floor(pct * buckets));
+      opts.onChunk?.(chunkIdx, buckets, "");
+    });
+
+    audio.addEventListener("ended", () => {
+      if (cancelled) return;
+      opts.onEnd?.();
+      cleanup();
+    });
+
+    audio.addEventListener("error", () => {
+      if (cancelled) return;
+      opts.onError?.("audio playback error");
+      cleanup();
+    });
+
+    // Begin playback (must be in a user-gesture call chain to avoid mobile autoplay block)
+    try {
+      await audio.play();
+    } catch (e) {
+      cleanup();
+      opts.onError?.(`play blocked: ${(e as Error)?.message || "unknown"}`);
+      return null;
+    }
+
+    return {
+      stop: () => {
+        cancelled = true;
+        cleanup();
+        opts.onEnd?.();
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function speak(opts: SpeakOptions): Promise<SpeakHandle> {
+  // Try the high-quality server TTS first.
+  const server = await tryServerTTS(opts);
+  if (server) return server;
+
+  // Fall back to browser speech synthesis.
   const synth = typeof window !== "undefined" ? window.speechSynthesis : null;
   if (!synth) {
     opts.onError?.("speech synthesis not supported");
