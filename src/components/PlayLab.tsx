@@ -3,26 +3,29 @@ import { useState } from "react";
 import type { Lang } from "../lib/i18n";
 import ReflexLab from "./ReflexLab";
 import TechSprint from "./TechSprint";
+import Pulse from "./Pulse";
 
-type Tab = "reflex" | "sprint";
+type Tab = "reflex" | "sprint" | "pulse";
 
 const COPY = {
   ar: {
     eyebrow: "/04 العب",
-    title: "لعبتان. كل وحدة تعلّمك شي ولا تتركك تنساها.",
-    sub: "Reflex Lab تكشف نمطك كمؤسس بـ٧ قرارات. Tech Sprint يختبر سرعة تفكيرك في AI، التقنية السعودية، واقتصاد المؤسس. كلتيهن مجاني، بدون تسجيل، تشتغل على الجوال.",
+    title: "ثلاث ألعاب. كل وحدة تشتغل في الدماغ من زاوية مختلفة.",
+    sub: "Reflex Lab يكشف نمطك كمؤسس. Tech Sprint يختبر سرعة معرفتك. Pulse يدرّب ذاكرتك العاملة. الثلاث مجاني، بدون تسجيل، يشتغلون على الجوال.",
     tabs: {
-      reflex: { name: "Reflex Lab", desc: "نمطك كمؤسس · ٤٢ ث" },
-      sprint: { name: "Tech Sprint", desc: "سباق نقاط · ٦٠ ث" },
+      reflex: { name: "Reflex Lab", desc: "نمطك كمؤسس · ٤٢ ث", emoji: "🎴" },
+      sprint: { name: "Tech Sprint", desc: "سباق نقاط · ٦٠ ث", emoji: "⚡" },
+      pulse:  { name: "Pulse",       desc: "ذاكرة عاملة · مفتوح", emoji: "🧠" },
     },
   },
   en: {
     eyebrow: "/04 play",
-    title: "two games. each one teaches you something you'll remember.",
-    sub: "Reflex Lab maps your founder DNA in 7 quick decisions. Tech Sprint tests how fast you can recall AI fundamentals, Saudi tech, and founder economics. both free, no signup, mobile-first.",
+    title: "three games. each one trains the brain from a different angle.",
+    sub: "Reflex Lab maps your founder DNA. Tech Sprint tests recall speed. Pulse trains visual working memory. all three free, no signup, mobile-first.",
     tabs: {
-      reflex: { name: "Reflex Lab", desc: "founder DNA · 42s" },
-      sprint: { name: "Tech Sprint", desc: "score race · 60s" },
+      reflex: { name: "Reflex Lab", desc: "founder DNA · 42s",   emoji: "🎴" },
+      sprint: { name: "Tech Sprint", desc: "score race · 60s",   emoji: "⚡" },
+      pulse:  { name: "Pulse",       desc: "working memory",      emoji: "🧠" },
     },
   },
 } as const;
@@ -75,9 +78,9 @@ export default function PlayLab({ lang }: { lang: Lang }) {
         <div
           role="tablist"
           aria-label={isAr ? "ألعاب" : "games"}
-          className="mt-8 grid grid-cols-2 gap-2 rounded-2xl border border-ink-800 bg-ink-900/40 p-1.5 backdrop-blur-md"
+          className="mt-8 grid grid-cols-1 gap-2 rounded-2xl border border-ink-800 bg-ink-900/40 p-1.5 backdrop-blur-md sm:grid-cols-3"
         >
-          {(["reflex", "sprint"] as Tab[]).map((id) => (
+          {(["reflex", "sprint", "pulse"] as Tab[]).map((id) => (
             <button
               key={id}
               type="button"
@@ -97,14 +100,14 @@ export default function PlayLab({ lang }: { lang: Lang }) {
                 />
               )}
               <div className="relative flex items-center justify-between gap-3">
-                <div>
+                <div className="min-w-0">
                   <div className={`font-en text-[11px] uppercase tracking-[0.22em] ${tab === id ? "text-ember-500" : "text-ink-300"}`}>
                     {L.tabs[id].name}
                   </div>
-                  <div className="mt-1 text-[12px] text-ink-500">{L.tabs[id].desc}</div>
+                  <div className="mt-1 truncate text-[12px] text-ink-500">{L.tabs[id].desc}</div>
                 </div>
                 <span className={`text-2xl ${tab === id ? "" : "opacity-50"}`}>
-                  {id === "reflex" ? "🎴" : "⚡"}
+                  {L.tabs[id].emoji}
                 </span>
               </div>
             </button>
@@ -114,7 +117,7 @@ export default function PlayLab({ lang }: { lang: Lang }) {
         {/* Active panel */}
         <div className="mt-8">
           <AnimatePresence mode="wait">
-            {tab === "reflex" ? (
+            {tab === "reflex" && (
               <motion.div
                 key="reflex"
                 initial={{ opacity: 0, y: 10 }}
@@ -124,7 +127,8 @@ export default function PlayLab({ lang }: { lang: Lang }) {
               >
                 <ReflexLab lang={lang} />
               </motion.div>
-            ) : (
+            )}
+            {tab === "sprint" && (
               <motion.div
                 key="sprint"
                 initial={{ opacity: 0, y: 10 }}
@@ -133,6 +137,17 @@ export default function PlayLab({ lang }: { lang: Lang }) {
                 transition={{ duration: 0.4 }}
               >
                 <TechSprint lang={lang} />
+              </motion.div>
+            )}
+            {tab === "pulse" && (
+              <motion.div
+                key="pulse"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.4 }}
+              >
+                <Pulse lang={lang} />
               </motion.div>
             )}
           </AnimatePresence>
