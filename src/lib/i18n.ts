@@ -4,7 +4,7 @@ export const copy = {
   nav: {
     work: { ar: "الأعمال", en: "Work" },
     method: { ar: "الطريقة", en: "Method" },
-    lab: { ar: "اختبر فكرتك", en: "Lab" },
+    lab: { ar: "العب", en: "Play" },
     ask: { ar: "اسألني", en: "Ask" },
     contact: { ar: "تواصل", en: "Contact" },
   },

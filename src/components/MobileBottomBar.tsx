@@ -30,7 +30,7 @@ export default function MobileBottomBar({ lang }: { lang: Lang }) {
         className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-ember-500/30 bg-ember-500/10 px-4 py-3 text-[11px] uppercase tracking-[0.18em] text-ember-400 transition active:scale-[0.97]"
       >
         <Compass size={16} />
-        <span>{lang === "ar" ? "اختبر فكرتك" : "Test idea"}</span>
+        <span>{lang === "ar" ? "العب" : "Play"}</span>
       </a>
       <a
         href="https://wa.me/966599988522"

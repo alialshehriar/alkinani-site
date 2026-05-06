@@ -202,61 +202,34 @@ export default function ReflexLab({ lang }: { lang: Lang }) {
   const card = deck[idx];
 
   return (
-    <section id="lab" className="relative w-full overflow-hidden px-5 py-24 sm:px-8 sm:py-40">
-      <div
-        className="ambient-orb pulse-soft"
-        style={{
-          width: 540,
-          height: 540,
-          top: "5%",
-          [isAr ? "right" : "left"]: -180,
-          background: "oklch(0.72 0.17 50 / 1)",
-        }}
-      />
-
-      <div className="relative mx-auto max-w-5xl">
-        <div className="grid grid-cols-1 gap-6 sm:gap-10 lg:grid-cols-12">
-          <motion.p
-            initial={false}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: "-15%" }}
-            transition={{ duration: 0.7 }}
-            className="text-xs uppercase tracking-[0.3em] text-ember-500 lg:col-span-4"
-          >
-            {L.eyebrow}
-          </motion.p>
-          <motion.h2
-            initial={false}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: "-10%" }}
-            transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
-            className="font-semibold leading-[1.05] text-ink-100 lg:col-span-8"
-            style={{ fontSize: "clamp(1.95rem, 5vw, 3.75rem)" }}
-          >
-            {L.title}
-          </motion.h2>
-        </div>
-        <p className="mt-3 max-w-2xl text-sm text-ink-400 sm:text-base" style={{ lineHeight: 1.65 }}>
+    <div className="space-y-6">
+      {/* Headline strip — small, inside the tab pane */}
+      <div className="space-y-2">
+        <h3 className="font-semibold text-ink-100" style={{ fontSize: "clamp(1.5rem, 3.5vw, 2.4rem)", lineHeight: 1.15 }}>
+          {L.title}
+        </h3>
+        <p className="text-sm text-ink-400 sm:text-base" style={{ lineHeight: 1.65 }}>
           {L.sub}
         </p>
+      </div>
 
-        {/* Stats strip */}
-        <div className="mt-8 grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-ink-800 bg-ink-800 sm:grid-cols-4">
-          <StatCell label={L.stats.best} value={stats.best ? `${stats.best}` : "—"} accent={stats.best >= 80 ? "ember" : "ink"} />
-          <StatCell label={L.stats.streak} value={stats.streak > 0 ? `${stats.streak}🔥` : "—"} />
-          <StatCell label={L.stats.total} value={stats.total ? `${stats.total}` : "—"} />
-          <StatCell label={L.stats.perfect} value={stats.perfect > 0 ? `${stats.perfect}` : "—"} accent={stats.perfect > 0 ? "tide" : "ink"} />
-        </div>
+      {/* Stats strip */}
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-ink-800 bg-ink-800 sm:grid-cols-4">
+        <StatCell label={L.stats.best} value={stats.best ? `${stats.best}` : "—"} accent={stats.best >= 80 ? "ember" : "ink"} />
+        <StatCell label={L.stats.streak} value={stats.streak > 0 ? `${stats.streak}🔥` : "—"} />
+        <StatCell label={L.stats.total} value={stats.total ? `${stats.total}` : "—"} />
+        <StatCell label={L.stats.perfect} value={stats.perfect > 0 ? `${stats.perfect}` : "—"} accent={stats.perfect > 0 ? "tide" : "ink"} />
+      </div>
 
-        {/* Game card */}
-        <motion.div
-          layout
-          initial={false}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: "-10%" }}
-          transition={{ duration: 0.7 }}
-          className="mt-8 overflow-hidden rounded-3xl border border-ink-800 bg-ink-900/60 backdrop-blur-md"
-        >
+      {/* Game card */}
+      <motion.div
+        layout
+        initial={false}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, margin: "-10%" }}
+        transition={{ duration: 0.7 }}
+        className="overflow-hidden rounded-3xl border border-ink-800 bg-ink-900/60 backdrop-blur-md"
+      >
           <AnimatePresence mode="wait">
             {phase === "intro" && (
               <IntroPanel key="intro" L={L} onStart={start} totalCards={ROUND_COUNT} lang={lang} />
@@ -286,16 +259,15 @@ export default function ReflexLab({ lang }: { lang: Lang }) {
                 L={L}
               />
             )}
-          </AnimatePresence>
-        </motion.div>
+        </AnimatePresence>
+      </motion.div>
 
-        {error && (
-          <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">
-            {error}
-          </div>
-        )}
-      </div>
-    </section>
+      {error && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">
+          {error}
+        </div>
+      )}
+    </div>
   );
 }
 

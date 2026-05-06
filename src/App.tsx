@@ -5,7 +5,7 @@ import Origin from "./components/Origin";
 import Ventures from "./components/Ventures";
 import Method from "./components/Method";
 import AskTerminal from "./components/AskTerminal";
-import ReflexLab from "./components/ReflexLab";
+import PlayLab from "./components/PlayLab";
 import Stack from "./components/Stack";
 import Contact from "./components/Contact";
 import Footer from "./components/Footer";
@@ -38,7 +38,7 @@ export default function App() {
         <Origin lang={lang} />
         <Ventures lang={lang} />
         <Method lang={lang} />
-        <ReflexLab lang={lang} />
+        <PlayLab lang={lang} />
         <AskTerminal lang={lang} />
         <Stack lang={lang} />
         <Contact lang={lang} />
