@@ -45,6 +45,17 @@ export const onRequestOptions: PagesFunction = async () => {
   return new Response(null, { status: 204, headers });
 };
 
+// GET /api/tts — health/configured probe so the frontend can hide the play
+// button entirely when no upstream voice provider is configured.
+export const onRequestGet: PagesFunction<Env> = async ({ env }) => {
+  const headers = new Headers({ "Content-Type": "application/json" });
+  setCORS(headers);
+  return new Response(
+    JSON.stringify({ ok: true, configured: !!env.ELEVENLABS_API_KEY }),
+    { headers },
+  );
+};
+
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   let body: Body;
   try {

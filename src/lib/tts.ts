@@ -212,70 +212,42 @@ async function tryServerTTS(opts: SpeakOptions): Promise<SpeakHandle | null> {
   }
 }
 
+// Cache of the /api/tts configuration probe — null until first check.
+let ttsConfigured: boolean | null = null;
+
+export async function isHighQualityTTSConfigured(): Promise<boolean> {
+  if (ttsConfigured !== null) return ttsConfigured;
+  if (typeof window === "undefined") return false;
+  try {
+    const res = await fetch("/api/tts", { method: "GET" });
+    if (!res.ok) {
+      ttsConfigured = false;
+      return false;
+    }
+    const data = (await res.json()) as { configured?: boolean };
+    ttsConfigured = !!data.configured;
+    return ttsConfigured;
+  } catch {
+    ttsConfigured = false;
+    return false;
+  }
+}
+
 export async function speak(opts: SpeakOptions): Promise<SpeakHandle> {
-  // Try the high-quality server TTS first.
+  // High-quality only. If the server TTS isn't configured, do nothing —
+  // upstream UI should already be hiding the play button via the probe.
+  // Browser speech-synthesis fallback intentionally disabled because it
+  // produces robotic Arabic that hurts the brand.
   const server = await tryServerTTS(opts);
   if (server) return server;
-
-  // Fall back to browser speech synthesis.
-  const synth = typeof window !== "undefined" ? window.speechSynthesis : null;
-  if (!synth) {
-    opts.onError?.("speech synthesis not supported");
-    return { stop: () => {} };
-  }
-  await whenVoicesReady();
-  const voice = pickBestVoice(opts.lang);
-  const chunks = chunk(opts.text);
-  if (chunks.length === 0) return { stop: () => {} };
-
-  let cancelled = false;
-  let currentIdx = 0;
-  synth.cancel();
-
-  const speakNext = () => {
-    if (cancelled) return;
-    if (currentIdx >= chunks.length) {
-      opts.onEnd?.();
-      return;
-    }
-    const text = chunks[currentIdx];
-    const u = new SpeechSynthesisUtterance(text);
-    if (voice) u.voice = voice;
-    u.lang = opts.lang === "ar" ? "ar-SA" : "en-US";
-    // Rate tuning — slightly slower for Arabic = clearer phonemes.
-    u.rate = opts.lang === "ar" ? 0.96 : 1.0;
-    u.pitch = 1.0;
-    u.volume = 1.0;
-    u.onstart = () => {
-      if (currentIdx === 0) opts.onStart?.();
-      opts.onChunk?.(currentIdx, chunks.length, text);
-    };
-    u.onend = () => {
-      if (cancelled) return;
-      currentIdx += 1;
-      // Tiny pause between sentences for realism
-      setTimeout(speakNext, 70);
-    };
-    u.onerror = (e) => {
-      if (cancelled) return;
-      const err = (e as SpeechSynthesisErrorEvent).error || "synth error";
-      // ignore "interrupted" — it's just a cancel
-      if (err === "interrupted" || err === "canceled") return;
-      opts.onError?.(err);
-    };
-    synth.speak(u);
-  };
-
-  speakNext();
-
-  return {
-    stop: () => {
-      cancelled = true;
-      synth.cancel();
-      opts.onEnd?.();
-    },
-  };
+  opts.onError?.("voice not configured");
+  return { stop: () => {} };
 }
+
+// Mark these helpers as used by future expansions (kept for completeness).
+void pickBestVoice;
+void chunk;
+void whenVoicesReady;
 
 // Tiny helper for the UI: given an audio "level" 0..1 (we fake it from chunk
 // progress), return a CSS waveform.

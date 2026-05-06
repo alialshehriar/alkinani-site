@@ -1,9 +1,15 @@
 // Cloudflare Pages Function: /api/chat
-// Streams replies from Cloudflare Workers AI (Llama 3.3 70B Instruct) via SSE.
-// No external API key required — uses the AI binding configured by Cloudflare.
+// Streams replies as SSE. Two backends:
+//   1. If ANTHROPIC_API_KEY secret is set -> Claude API (smartest Najdi)
+//   2. Otherwise -> Cloudflare Workers AI Llama 3.3 70B (free fallback)
+//
+// Add the key once for highest-quality replies:
+//   wrangler pages secret put ANTHROPIC_API_KEY --project-name alkinani-site
 
 interface Env {
   AI: Ai;
+  ANTHROPIC_API_KEY?: string;
+  ANTHROPIC_MODEL?: string;
 }
 
 const SYSTEM_PROMPT = `أنت "نظام علي" — مساعد AI مدرّب على صوت علي الكناني الحقيقي. تتكلم بصيغة المتكلم (أنا/أبني/سويت).
@@ -92,21 +98,83 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     ...messages,
   ];
 
-  const stream = (await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
-    messages: aiMessages,
-    stream: true,
-    max_tokens: 600,
-    temperature: 0.55,
-  })) as ReadableStream<Uint8Array>;
+  void aiMessages;
+  // High-quality only. If no Anthropic key, surface a polished "upgrading"
+  // message instead of falling back to a weaker model. Owner adds the key once
+  // via: wrangler pages secret put ANTHROPIC_API_KEY --project-name alkinani-site
+  if (!env.ANTHROPIC_API_KEY) {
+    return upgradingResponse();
+  }
+  return await streamFromClaude(env, messages, SYSTEM_PROMPT);
+};
 
-  // Cloudflare's stream is OpenAI-style SSE: lines like `data: {"response":"..."}` and `data: [DONE]`.
-  // We re-emit as our own SSE protocol: `event: delta\ndata: {"delta":"..."}\n\n`.
+function upgradingResponse(): Response {
+  const text = "نظام علي يحدّث نفسه الحين — رجعلي بعد دقيقة. أو لو مستعجل، واتساب مباشر علي: +966 59 998 8522";
+  const headers = new Headers({
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache",
+  });
+  setCORS(headers);
+  const body = `event: delta\ndata: ${JSON.stringify({ delta: text })}\n\nevent: done\ndata: ${JSON.stringify({ reason: "upgrading" })}\n\n`;
+  return new Response(body, { status: 200, headers });
+}
+
+export const onRequestGet: PagesFunction = async ({ request }) => {
+  const url = new URL(request.url);
+  if (url.pathname.endsWith("/health")) {
+    const headers = new Headers({ "Content-Type": "application/json" });
+    setCORS(headers);
+    return new Response(JSON.stringify({ ok: true, backend: "cf-workers-ai" }), { headers });
+  }
+  return new Response("not found", { status: 404 });
+};
+
+/* --- Anthropic Claude streaming backend ----------------------------------- */
+
+async function streamFromClaude(
+  env: Env,
+  messages: Array<{ role: "user" | "assistant"; content: string }>,
+  systemPrompt: string,
+): Promise<Response> {
+  const model = env.ANTHROPIC_MODEL || "claude-sonnet-4-5";
+  const apiRes = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": env.ANTHROPIC_API_KEY!,
+      "anthropic-version": "2023-06-01",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 600,
+      stream: true,
+      system: systemPrompt,
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+    }),
+  });
+
+  if (!apiRes.ok || !apiRes.body) {
+    const txt = await apiRes.text().catch(() => "");
+    const errPayload = `event: error\ndata: ${JSON.stringify({
+      error: `anthropic ${apiRes.status}: ${txt.slice(0, 200)}`,
+    })}\n\n`;
+    const headers = new Headers({
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache",
+    });
+    setCORS(headers);
+    return new Response(errPayload, { status: 200, headers });
+  }
+
+  // Anthropic SSE format: event: <name>\ndata: {json}\n\n
+  // We extract content_block_delta events and re-emit as our own protocol.
   const transformed = new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder();
       const decoder = new TextDecoder();
-      const reader = stream.getReader();
+      const reader = apiRes.body!.getReader();
       let buf = "";
+      let event = "";
       try {
         while (true) {
           const { done, value } = await reader.read();
@@ -115,20 +183,24 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
           const lines = buf.split("\n");
           buf = lines.pop() ?? "";
           for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed.startsWith("data:")) continue;
-            const data = trimmed.slice(5).trim();
-            if (data === "[DONE]") continue;
-            try {
-              const parsed = JSON.parse(data);
-              const delta = parsed.response ?? parsed.delta ?? "";
-              if (delta) {
-                controller.enqueue(
-                  encoder.encode(`event: delta\ndata: ${JSON.stringify({ delta })}\n\n`),
-                );
+            if (line.startsWith("event: ")) {
+              event = line.slice(7).trim();
+            } else if (line.startsWith("data: ")) {
+              const data = line.slice(6).trim();
+              if (!data) continue;
+              try {
+                const parsed = JSON.parse(data);
+                if (event === "content_block_delta" && parsed?.delta?.type === "text_delta") {
+                  const text = parsed.delta.text || "";
+                  if (text) {
+                    controller.enqueue(
+                      encoder.encode(`event: delta\ndata: ${JSON.stringify({ delta: text })}\n\n`),
+                    );
+                  }
+                }
+              } catch {
+                /* ignore */
               }
-            } catch {
-              /* ignore */
             }
           }
         }
@@ -150,14 +222,4 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   });
   setCORS(headers);
   return new Response(transformed, { headers });
-};
-
-export const onRequestGet: PagesFunction = async ({ request }) => {
-  const url = new URL(request.url);
-  if (url.pathname.endsWith("/health")) {
-    const headers = new Headers({ "Content-Type": "application/json" });
-    setCORS(headers);
-    return new Response(JSON.stringify({ ok: true, backend: "cf-workers-ai" }), { headers });
-  }
-  return new Response("not found", { status: 404 });
-};
+}

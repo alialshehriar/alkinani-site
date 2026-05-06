@@ -1,7 +1,7 @@
 import { motion, AnimatePresence } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import type { Lang } from "../lib/i18n";
-import { speak, progressLevel, type SpeakHandle } from "../lib/tts";
+import { speak, progressLevel, isHighQualityTTSConfigured, type SpeakHandle } from "../lib/tts";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
@@ -168,7 +168,12 @@ export default function AskTerminal({ lang }: { lang: Lang }) {
   const [resumeOffer, setResumeOffer] = useState<Msg[] | null>(null);
   const [voiceIdx, setVoiceIdx] = useState<number | null>(null);
   const [voiceProgress, setVoiceProgress] = useState(0);
+  const [voiceConfigured, setVoiceConfigured] = useState(false);
   const voiceHandleRef = useRef<SpeakHandle | null>(null);
+
+  useEffect(() => {
+    isHighQualityTTSConfigured().then(setVoiceConfigured);
+  }, []);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -454,6 +459,7 @@ export default function AskTerminal({ lang }: { lang: Lang }) {
                 isStreaming={streaming && i === messages.length - 1 && m.role === "assistant"}
                 playing={voiceIdx === i}
                 playProgress={voiceIdx === i ? voiceProgress : 0}
+                showPlay={voiceConfigured}
                 onPlay={() => playVoice(i)}
                 playLabel={voiceIdx === i ? L.stop : L.play}
                 roleLabel={m.role === "user" ? L.question : L.answer}
@@ -546,6 +552,7 @@ function Bubble({
   isStreaming,
   playing,
   playProgress,
+  showPlay,
   onPlay,
   playLabel,
   roleLabel,
@@ -555,13 +562,15 @@ function Bubble({
   isStreaming: boolean;
   playing: boolean;
   playProgress: number;
+  showPlay: boolean;
   onPlay: () => void;
   playLabel: string;
   roleLabel: string;
 }) {
   const isAr = lang === "ar";
   const user = msg.role === "user";
-  const ttsAvailable = typeof window !== "undefined" && !!window.speechSynthesis;
+  // Only render the play button when the high-quality server TTS is configured.
+  const ttsAvailable = showPlay;
 
   return (
     <motion.div
