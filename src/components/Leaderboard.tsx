@@ -168,6 +168,12 @@ export default function Leaderboard({
       setSubmitted({ rank: r.rank, total: r.total, score: r.score });
       setHighlightName(trimmed);
       onSubmitted?.(r.rank, r.total);
+      // Haptic feedback on supported mobile devices.
+      try {
+        const nav = navigator as Navigator & { vibrate?: (p: number | number[]) => boolean };
+        // Bigger pattern for top-3 finishes.
+        nav.vibrate?.(r.rank <= 3 ? [80, 50, 80, 50, 120] : 30);
+      } catch { /* not supported */ }
       window.setTimeout(refresh, 250);
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
@@ -345,8 +351,9 @@ export default function Leaderboard({
                 initial={{ opacity: 0, y: 4 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.04, duration: 0.3 }}
+                style={{ minHeight: 44 }}
                 className={[
-                  "grid grid-cols-[2.2rem_1fr_auto] items-center gap-3 border-b border-ink-800/60 px-3 py-2 text-sm last:border-b-0",
+                  "grid grid-cols-[2.4rem_1fr_auto] items-center gap-3 border-b border-ink-800/60 px-3 py-3 text-sm last:border-b-0 sm:py-2",
                   isYou ? "bg-ember-500/10" : "",
                 ].join(" ")}
               >

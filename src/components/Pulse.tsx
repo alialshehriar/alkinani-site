@@ -2,6 +2,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Lang } from "../lib/i18n";
 import { readPulseStats, recordPulse, type PulseStats } from "../lib/pulseStats";
+import Leaderboard from "./Leaderboard";
 import { playCellTone, playSuccess, playFail } from "../lib/audio";
 
 type Phase = "idle" | "showing" | "input" | "round-complete" | "game-over";
@@ -375,7 +376,7 @@ export default function Pulse({ lang }: { lang: Lang }) {
               </>
             )}
             {phase === "game-over" && (
-              <div className="w-full">
+              <div className="w-full space-y-5">
                 <GameOverCard
                   level={level}
                   score={score}
@@ -385,6 +386,20 @@ export default function Pulse({ lang }: { lang: Lang }) {
                   onAgain={startRun}
                   onIdle={reset}
                 />
+                <Leaderboard
+                  lang={lang}
+                  game="pulse"
+                  variant="full"
+                  pendingScore={{
+                    score,
+                    meta: { level, longestSeq },
+                  }}
+                />
+              </div>
+            )}
+            {phase === "idle" && (
+              <div className="mt-6 w-full">
+                <Leaderboard lang={lang} game="pulse" variant="compact" />
               </div>
             )}
           </div>

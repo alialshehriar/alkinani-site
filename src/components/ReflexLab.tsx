@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Lang } from "../lib/i18n";
 import { type Card, pickRandomCards, summarizeAxes, type Choice } from "../lib/cards";
 import { readStats, recordPlay, type Stats } from "../lib/stats";
+import Leaderboard from "./Leaderboard";
 
 const ROUND_SECONDS = 6; // per-card timer
 const ROUND_COUNT = 7;
@@ -90,6 +91,7 @@ export default function ReflexLab({ lang }: { lang: Lang }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<Stats>({ best: 0, streak: 0, total: 0, lastPlay: "", perfect: 0 });
+  const [decisivenessScore, setDecisivenessScore] = useState<number>(0);
   const timerRef = useRef<number | null>(null);
   const phaseRef = useRef<Phase>("intro");
   const idxRef = useRef(0);
@@ -192,6 +194,7 @@ export default function ReflexLab({ lang }: { lang: Lang }) {
       const data = (await res.json()) as Profile;
       setProfile(data);
       setStats(recordPlay(finalScore));
+      setDecisivenessScore(finalScore);
       setPhase("result");
     } catch {
       setError(isAr ? "فشل الاتصال." : "Connection failed.");
@@ -261,6 +264,21 @@ export default function ReflexLab({ lang }: { lang: Lang }) {
             )}
         </AnimatePresence>
       </motion.div>
+
+      {phase === "intro" && (
+        <Leaderboard lang={lang} game="reflex" variant="compact" />
+      )}
+      {phase === "result" && profile && (
+        <Leaderboard
+          lang={lang}
+          game="reflex"
+          variant="full"
+          pendingScore={{
+            score: decisivenessScore,
+            meta: { archetype: profile.archetype },
+          }}
+        />
+      )}
 
       {error && (
         <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">

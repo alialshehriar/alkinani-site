@@ -82,6 +82,26 @@ export async function fetchLeaderboard(game: string, limit = 10, signal?: AbortS
   return res.json();
 }
 
+export type KingEntry = {
+  name: string;
+  total: number;
+  gamesPlayed: number;
+  breakdown: { sprint: number; pulse: number; reflex: number };
+  country?: string | null;
+  lastAt: number | null;
+};
+
+export type KingResponse = {
+  top: KingEntry[];
+  uniqueNames: number;
+};
+
+export async function fetchKing(limit = 10, signal?: AbortSignal): Promise<KingResponse> {
+  const res = await fetch(`/api/leaderboard/king?limit=${limit}`, { signal });
+  if (!res.ok) throw new Error(`king ${res.status}`);
+  return res.json();
+}
+
 export async function submitScore(input: {
   game: string;
   name: string;

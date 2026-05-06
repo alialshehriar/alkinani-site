@@ -6,6 +6,7 @@ import Ventures from "./components/Ventures";
 import Method from "./components/Method";
 import AskTerminal from "./components/AskTerminal";
 import PlayLab from "./components/PlayLab";
+import Throne from "./components/Throne";
 import Stack from "./components/Stack";
 import Contact from "./components/Contact";
 import Footer from "./components/Footer";
@@ -37,6 +38,7 @@ export default function App() {
         <Hero lang={lang} />
         <Origin lang={lang} />
         <PlayLab lang={lang} />
+        <Throne lang={lang} />
         <Ventures lang={lang} />
         <AskTerminal lang={lang} />
         <Method lang={lang} />

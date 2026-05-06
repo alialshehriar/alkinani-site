@@ -574,9 +574,9 @@ db.exec(`
 // Add `country` column to existing tables (no-op if already there).
 try { db.exec("ALTER TABLE scores ADD COLUMN country TEXT"); } catch {}
 
-const VALID_GAMES = new Set(["sprint", "reflex", "pressure"]);
+const VALID_GAMES = new Set(["sprint", "pulse", "reflex"]);
 // Per-game caps to short-circuit obvious cheats. Tune as the games evolve.
-const GAME_MAX = { sprint: 2000, reflex: 100, pressure: 100 };
+const GAME_MAX = { sprint: 2000, pulse: 5000, reflex: 100 };
 
 const insertScore = db.prepare(
   "INSERT INTO scores (game, name, score, meta, country, ip_hash) VALUES (?, ?, ?, ?, ?, ?)"
@@ -680,6 +680,52 @@ function sanitizeName(raw) {
   if (/https?:\/\//i.test(n) || /(^|\s)@\w/.test(n)) return null;
   return n;
 }
+
+// "King of Champions" — combined best score across all games per name.
+// Each name's contribution is its single best score per game, summed.
+const kingStmt = db.prepare(
+  `WITH bests AS (
+     SELECT name, game, MAX(score) AS best
+     FROM scores
+     WHERE game IN ('sprint','pulse','reflex')
+     GROUP BY name, game
+   )
+   SELECT
+     name,
+     SUM(best) AS total,
+     COUNT(DISTINCT game) AS gamesPlayed,
+     MAX(CASE WHEN game='sprint' THEN best END) AS sprint,
+     MAX(CASE WHEN game='pulse'  THEN best END) AS pulse,
+     MAX(CASE WHEN game='reflex' THEN best END) AS reflex,
+     (SELECT MAX(country) FROM scores s2 WHERE s2.name = bests.name) AS country,
+     (SELECT MAX(created_at) FROM scores s2 WHERE s2.name = bests.name) AS lastAt
+   FROM bests
+   GROUP BY name
+   ORDER BY total DESC, gamesPlayed DESC, lastAt ASC
+   LIMIT ?`
+);
+const kingTotalsStmt = db.prepare(
+  `SELECT COUNT(DISTINCT name) AS uniqueNames FROM scores WHERE game IN ('sprint','pulse','reflex')`
+);
+
+app.get("/api/leaderboard/king", (req, res) => {
+  const limit = Math.min(Math.max(parseInt(req.query?.limit || "10", 10) || 10, 1), 50);
+  const top = kingStmt.all(limit).map((r) => ({
+    name: r.name,
+    total: r.total || 0,
+    gamesPlayed: r.gamesPlayed || 0,
+    breakdown: {
+      sprint: r.sprint || 0,
+      pulse: r.pulse || 0,
+      reflex: r.reflex || 0,
+    },
+    country: r.country || null,
+    lastAt: r.lastAt || null,
+  }));
+  const totals = kingTotalsStmt.get();
+  res.set("Cache-Control", "public, max-age=10");
+  res.json({ top, uniqueNames: totals.uniqueNames || 0 });
+});
 
 app.get("/api/leaderboard", (req, res) => {
   const game = String(req.query?.game || "sprint").toLowerCase();
