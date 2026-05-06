@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Lang } from "../lib/i18n";
 import { pickQuestions, type QuizQuestion } from "../lib/quizzes";
 import { readSprintStats, recordSprint, type SprintStats } from "../lib/sprintStats";
+import Leaderboard from "./Leaderboard";
 
 type Phase = "intro" | "playing" | "result";
 
@@ -223,12 +224,15 @@ export default function TechSprint({ lang }: { lang: Lang }) {
               </button>
             </div>
 
-            {/* Stats card */}
-            <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-ink-800 bg-ink-800">
-              <SprintStatCell label={L.stats.best} value={stats.best ? `${stats.best}` : "—"} accent={stats.best >= 200 ? "ember" : "ink"} />
-              <SprintStatCell label={L.stats.bestStreak} value={stats.bestStreak ? `${stats.bestStreak}🔥` : "—"} />
-              <SprintStatCell label={L.stats.total} value={stats.total ? `${stats.total}` : "—"} />
-              <SprintStatCell label={L.stats.flow} value={stats.perfectFlow ? `${stats.perfectFlow}` : "—"} accent={stats.perfectFlow ? "tide" : "ink"} />
+            {/* Stats card + Leaderboard preview */}
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-ink-800 bg-ink-800">
+                <SprintStatCell label={L.stats.best} value={stats.best ? `${stats.best}` : "—"} accent={stats.best >= 200 ? "ember" : "ink"} />
+                <SprintStatCell label={L.stats.bestStreak} value={stats.bestStreak ? `${stats.bestStreak}🔥` : "—"} />
+                <SprintStatCell label={L.stats.total} value={stats.total ? `${stats.total}` : "—"} />
+                <SprintStatCell label={L.stats.flow} value={stats.perfectFlow ? `${stats.perfectFlow}` : "—"} accent={stats.perfectFlow ? "tide" : "ink"} />
+              </div>
+              <Leaderboard lang={lang} game="sprint" variant="compact" />
             </div>
           </motion.div>
         )}
@@ -390,6 +394,23 @@ export default function TechSprint({ lang }: { lang: Lang }) {
               >
                 {L.again}
               </button>
+            </div>
+
+            <div className="mt-6">
+              <Leaderboard
+                lang={lang}
+                game="sprint"
+                variant="full"
+                pendingScore={{
+                  score: Math.max(0, score),
+                  meta: {
+                    correct: correctCount,
+                    wrong: wrongCount,
+                    bestStreak: bestStreakInRun,
+                    endReason,
+                  },
+                }}
+              />
             </div>
           </motion.div>
         )}
