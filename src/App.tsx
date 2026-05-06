@@ -5,6 +5,7 @@ import Origin from "./components/Origin";
 import Ventures from "./components/Ventures";
 import Method from "./components/Method";
 import AskTerminal from "./components/AskTerminal";
+import IdeaLab from "./components/IdeaLab";
 import Stack from "./components/Stack";
 import Contact from "./components/Contact";
 import Footer from "./components/Footer";
@@ -38,6 +39,7 @@ export default function App() {
         <Ventures lang={lang} />
         <Method lang={lang} />
         <AskTerminal lang={lang} />
+        <IdeaLab lang={lang} />
         <Stack lang={lang} />
         <Contact lang={lang} />
       </main>

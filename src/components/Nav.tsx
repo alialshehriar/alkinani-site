@@ -12,7 +12,7 @@ export default function Nav({
 }) {
   const items = [
     { id: "work", label: copy.nav.work },
-    { id: "method", label: copy.nav.method },
+    { id: "lab", label: copy.nav.lab },
     { id: "ask", label: copy.nav.ask },
     { id: "contact", label: copy.nav.contact },
   ];
