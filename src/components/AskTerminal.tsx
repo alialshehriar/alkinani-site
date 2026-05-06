@@ -1,4 +1,4 @@
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import type { Lang } from "../lib/i18n";
 
@@ -6,30 +6,103 @@ type Msg = { role: "user" | "assistant"; content: string };
 
 const STARTERS: Record<Lang, string[]> = {
   ar: [
-    "وش تبني؟",
-    "وش بذرة؟",
-    "متاح لمشاريع؟",
-    "كم تكلف بذرة؟",
-    "ليش الـoffshore؟",
+    "وش تبني فعلاً؟",
+    "كيف أبدأ مشروعي؟",
+    "متاح للمشاريع؟",
+    "كم تكلف بذرة لو اطلقتها؟",
+    "ليش offshore؟",
   ],
   en: [
-    "What do you build?",
-    "What is Bithrah?",
-    "Are you available?",
+    "What do you actually build?",
+    "How should I start my project?",
+    "Available for projects?",
+    "What does Bithrah cost?",
     "Why offshore?",
-    "How fast can you ship?",
+  ],
+};
+
+// Follow-up chips shown after at least one assistant message has streamed.
+const FOLLOWUPS: Record<Lang, string[]> = {
+  ar: [
+    "اشرح أكثر",
+    "أعطني رقم محدد",
+    "وش الخطوة الأولى؟",
+    "كيف نبدأ سوا؟",
+    "اضرب لي مثال حقيقي",
+  ],
+  en: [
+    "go deeper",
+    "give me a number",
+    "what's the first step?",
+    "how do we start?",
+    "give a concrete example",
   ],
 };
 
 const PLACEHOLDER: Record<Lang, string> = {
-  ar: "اكتب سؤالك… (أو اضغط اقتراح)",
-  en: "Type your question… (or pick a suggestion)",
+  ar: "اسأله أي شي… يفهم نجدي.",
+  en: "Ask anything…",
 };
 
 const LABELS = {
-  ar: { question: "السؤال", answer: "الجواب", thinking: "نظام علي يفكر…", send: "اسأل", sending: "يكتب…", clear: "ابدأ من جديد", suggestions: "أسئلة جاهزة" },
-  en: { question: "QUESTION", answer: "ANSWER", thinking: "Ali's system thinking…", send: "Ask", sending: "Typing…", clear: "Reset", suggestions: "TRY" },
+  ar: {
+    question: "أنت",
+    answer: "نظام علي",
+    thinking: "يفكر…",
+    send: "ارسل",
+    sending: "يكتب…",
+    clear: "محادثة جديدة",
+    suggestions: "ابدأ بـ",
+    followups: "اسأل أكثر",
+    play: "اسمع",
+    stop: "أوقف",
+    restore: "ترجع للمحادثة السابقة؟",
+    restoreYes: "أكمل",
+    restoreNo: "ابدأ من جديد",
+  },
+  en: {
+    question: "you",
+    answer: "ali's system",
+    thinking: "thinking…",
+    send: "send",
+    sending: "typing…",
+    clear: "new chat",
+    suggestions: "start with",
+    followups: "follow up",
+    play: "play",
+    stop: "stop",
+    restore: "Resume previous conversation?",
+    restoreYes: "resume",
+    restoreNo: "start fresh",
+  },
 } as const;
+
+const STORE_KEY = "alk-chat-history-v1";
+
+function loadHistory(): { messages: Msg[]; lang: Lang } | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { messages?: Msg[]; lang?: Lang };
+    if (!parsed.messages || !parsed.messages.length) return null;
+    return { messages: parsed.messages, lang: parsed.lang ?? "ar" };
+  } catch { return null; }
+}
+
+function saveHistory(messages: Msg[], lang: Lang) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    // Keep only the last 8 messages (4 exchanges) to stay under storage limits.
+    const trimmed = messages.slice(-8);
+    localStorage.setItem(STORE_KEY, JSON.stringify({ messages: trimmed, lang }));
+  } catch { /* ignore */ }
+}
+
+function clearHistory() {
+  if (typeof localStorage === "undefined") return;
+  try { localStorage.removeItem(STORE_KEY); } catch { /* ignore */ }
+}
 
 async function streamChat(
   messages: Msg[],
@@ -73,9 +146,7 @@ async function streamChat(
             if (event === "delta" && data.delta) onDelta(data.delta);
             else if (event === "error") onError(data.error || "stream error");
             else if (event === "done") onDone();
-          } catch {
-            /* ignore */
-          }
+          } catch { /* ignore */ }
         }
       }
     }
@@ -86,16 +157,34 @@ async function streamChat(
   }
 }
 
+/* -------------------------------- Component -------------------------------- */
+
 export default function AskTerminal({ lang }: { lang: Lang }) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resumeOffer, setResumeOffer] = useState<Msg[] | null>(null);
+  const [voiceIdx, setVoiceIdx] = useState<number | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const isAr = lang === "ar";
   const L = LABELS[lang];
+
+  // Offer to resume saved conversation on first mount
+  useEffect(() => {
+    const saved = loadHistory();
+    if (saved && saved.lang === lang && saved.messages.length > 0) {
+      setResumeOffer(saved.messages);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persist history whenever messages change
+  useEffect(() => {
+    if (messages.length > 0) saveHistory(messages, lang);
+  }, [messages, lang]);
 
   // Auto-scroll to bottom on new content
   useEffect(() => {
@@ -108,13 +197,19 @@ export default function AskTerminal({ lang }: { lang: Lang }) {
   useEffect(() => {
     setMessages([]);
     setError(null);
+    setVoiceIdx(null);
+    speechSynthesis?.cancel?.();
     abortRef.current?.abort();
+    setResumeOffer(null);
   }, [lang]);
 
   const send = async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || streaming) return;
+    speechSynthesis?.cancel?.();
+    setVoiceIdx(null);
     setError(null);
+    setResumeOffer(null);
     const next: Msg[] = [...messages, { role: "user", content: trimmed }, { role: "assistant", content: "" }];
     setMessages(next);
     setDraft("");
@@ -125,7 +220,7 @@ export default function AskTerminal({ lang }: { lang: Lang }) {
 
     let buffer = "";
     await streamChat(
-      next.slice(0, -1), // exclude the empty assistant placeholder we added
+      next.slice(0, -1),
       (delta) => {
         buffer += delta;
         setMessages((prev) => {
@@ -159,11 +254,52 @@ export default function AskTerminal({ lang }: { lang: Lang }) {
 
   const reset = () => {
     abortRef.current?.abort();
+    speechSynthesis?.cancel?.();
     setMessages([]);
     setDraft("");
     setError(null);
     setStreaming(false);
+    setVoiceIdx(null);
+    setResumeOffer(null);
+    clearHistory();
   };
+
+  const playVoice = (idx: number) => {
+    const m = messages[idx];
+    if (!m || m.role !== "assistant" || !m.content.trim()) return;
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    if (voiceIdx === idx) {
+      speechSynthesis.cancel();
+      setVoiceIdx(null);
+      return;
+    }
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(m.content);
+    u.lang = isAr ? "ar-SA" : "en-US";
+    u.rate = isAr ? 0.95 : 1.0;
+    u.pitch = 1.0;
+    u.onend = () => setVoiceIdx(null);
+    u.onerror = () => setVoiceIdx(null);
+    speechSynthesis.speak(u);
+    setVoiceIdx(idx);
+  };
+
+  const acceptResume = () => {
+    if (!resumeOffer) return;
+    setMessages(resumeOffer);
+    setResumeOffer(null);
+  };
+  const declineResume = () => {
+    setResumeOffer(null);
+    clearHistory();
+  };
+
+  // Pick chip set based on whether assistant has replied at least once
+  const hasAnyAssistantReply = messages.some(
+    (m) => m.role === "assistant" && m.content.trim().length > 0,
+  );
+  const chips = hasAnyAssistantReply ? FOLLOWUPS[lang] : STARTERS[lang];
+  const chipLabel = hasAnyAssistantReply ? L.followups : L.suggestions;
 
   return (
     <section id="ask" className="relative w-full overflow-hidden px-4 py-24 sm:px-8 sm:py-40">
@@ -204,8 +340,8 @@ export default function AskTerminal({ lang }: { lang: Lang }) {
         </div>
         <p className="mt-3 max-w-2xl text-sm text-ink-500 sm:text-base">
           {isAr
-            ? "ذكاء اصطناعي مدرّب على صوته. يرد بلهجة علي، يعرف مشاريعه، ولو طلبت تواصل بيرجعك له."
-            : "An AI trained on his voice. Speaks like Ali, knows his projects, hands you off when you want a real call."}
+            ? "ذكاء اصطناعي مدرّب على صوته. اضغط 🔊 على أي رد عشان تسمعه. المحادثة محفوظة لما ترجع."
+            : "An AI trained on his voice. Tap 🔊 on any reply to hear it. The conversation persists when you come back."}
         </p>
 
         <motion.div
@@ -242,44 +378,70 @@ export default function AskTerminal({ lang }: { lang: Lang }) {
             </div>
           </div>
 
+          {/* Resume banner */}
+          <AnimatePresence>
+            {resumeOffer && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.3 }}
+                className="overflow-hidden border-b border-ink-800 bg-tide-500/10 px-4 py-3 sm:px-5"
+              >
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="text-[11px] uppercase tracking-[0.22em] text-tide-400">
+                    {L.restore}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={acceptResume}
+                    data-cursor="hover"
+                    className="rounded-md bg-tide-500 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.2em] text-ink-950 transition hover:bg-tide-400"
+                  >
+                    {L.restoreYes}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={declineResume}
+                    data-cursor="hover"
+                    className="text-[11px] uppercase tracking-[0.2em] text-ink-500 transition hover:text-ink-200"
+                  >
+                    {L.restoreNo}
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {/* message log */}
           <div
             ref={scrollRef}
-            className="max-h-[60vh] min-h-[12rem] space-y-6 overflow-y-auto p-5 sm:p-8 font-mono"
+            className="max-h-[60vh] min-h-[14rem] space-y-5 overflow-y-auto p-4 sm:p-7"
             dir={isAr ? "rtl" : "ltr"}
             style={{ scrollBehavior: "smooth" }}
           >
-            {messages.length === 0 && (
+            {messages.length === 0 && !resumeOffer && (
               <div className="grid place-items-center py-8 text-center">
-                <div className="grid h-12 w-12 place-items-center rounded-full border border-ink-700 bg-ink-900 text-ember-500">
-                  <span className="block h-2 w-2 rounded-full bg-ember-500 motion-safe:animate-pulse" />
-                </div>
+                <span className="grid h-14 w-14 place-items-center rounded-full border border-ink-700 bg-ink-900">
+                  <span className="block h-3 w-3 rounded-full bg-gradient-to-br from-ember-500 to-tide-500 motion-safe:animate-pulse" />
+                </span>
                 <p className="mt-4 text-sm text-ink-400 sm:text-base">
-                  {isAr ? "ابدأ المحادثة. اكتب أي سؤال." : "Start the conversation. Ask anything."}
+                  {isAr ? "ابدأ المحادثة. اسأل أي شي." : "Start the conversation. Ask anything."}
                 </p>
               </div>
             )}
 
             {messages.map((m, i) => (
-              <div key={i}>
-                <div className="text-[10px] uppercase tracking-[0.22em] text-ink-500">
-                  {m.role === "user" ? L.question : L.answer}
-                </div>
-                <div
-                  className="mt-2 flex items-start gap-3"
-                  style={{ fontSize: "clamp(0.95rem, 1.3vw, 1.15rem)", lineHeight: 1.65 }}
-                >
-                  <span className={m.role === "user" ? "text-ember-500" : "text-tide-400"}>
-                    {isAr ? "←" : ">"}
-                  </span>
-                  <span className={`whitespace-pre-wrap break-words ${m.role === "user" ? "text-ink-100" : "text-ink-200"}`}>
-                    {m.content}
-                    {streaming && i === messages.length - 1 && m.role === "assistant" && (
-                      <span className="ms-1 inline-block h-4 w-[2px] animate-pulse bg-tide-400 align-middle" />
-                    )}
-                  </span>
-                </div>
-              </div>
+              <Bubble
+                key={i}
+                msg={m}
+                lang={lang}
+                isStreaming={streaming && i === messages.length - 1 && m.role === "assistant"}
+                playing={voiceIdx === i}
+                onPlay={() => playVoice(i)}
+                playLabel={voiceIdx === i ? L.stop : L.play}
+                roleLabel={m.role === "user" ? L.question : L.answer}
+              />
             ))}
 
             {streaming && messages[messages.length - 1]?.content === "" && (
@@ -302,26 +464,26 @@ export default function AskTerminal({ lang }: { lang: Lang }) {
 
           {/* input row */}
           <div className="border-t border-ink-800 bg-ink-950/40 p-4 sm:p-5">
-            {messages.length === 0 && (
-              <div className="mb-4">
-                <div className="mb-2 font-en text-[10px] uppercase tracking-[0.22em] text-ink-600">
-                  {L.suggestions}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {STARTERS[lang].map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      data-cursor="hover"
-                      onClick={() => send(s)}
-                      className="rounded-full border border-ink-700/70 bg-ink-900/60 px-3.5 py-1.5 text-[12px] text-ink-300 transition hover:border-ember-500/60 hover:bg-ember-500/10 hover:text-ember-500"
-                    >
-                      {s}
-                    </button>
-                  ))}
-                </div>
+            <div className="mb-3">
+              <div className="mb-2 font-en text-[10px] uppercase tracking-[0.22em] text-ink-600">
+                {chipLabel}
               </div>
-            )}
+              <div className="flex flex-wrap gap-2">
+                {chips.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    data-cursor="hover"
+                    disabled={streaming}
+                    onClick={() => send(s)}
+                    className="rounded-full border border-ink-700/70 bg-ink-900/60 px-3.5 py-1.5 text-[12px] text-ink-300 transition hover:border-ember-500/60 hover:bg-ember-500/10 hover:text-ember-500 disabled:opacity-50"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -357,5 +519,79 @@ export default function AskTerminal({ lang }: { lang: Lang }) {
         </motion.div>
       </div>
     </section>
+  );
+}
+
+/* ------------------------------- Sub-pieces ------------------------------- */
+
+function Bubble({
+  msg,
+  lang,
+  isStreaming,
+  playing,
+  onPlay,
+  playLabel,
+  roleLabel,
+}: {
+  msg: Msg;
+  lang: Lang;
+  isStreaming: boolean;
+  playing: boolean;
+  onPlay: () => void;
+  playLabel: string;
+  roleLabel: string;
+}) {
+  const isAr = lang === "ar";
+  const user = msg.role === "user";
+  const ttsAvailable = typeof window !== "undefined" && !!window.speechSynthesis;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+      className={`flex items-start gap-3 ${user ? "flex-row-reverse text-end" : ""} ${isAr ? "" : ""}`}
+    >
+      {/* avatar */}
+      <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full">
+        {user ? (
+          <span className="grid h-8 w-8 place-items-center rounded-full border border-ink-700 bg-ink-900 text-[10px] uppercase tracking-[0.22em] text-ink-400">
+            {isAr ? "أنت" : "you"}
+          </span>
+        ) : (
+          <span className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-ember-500 to-tide-500 text-[10px] font-bold text-ink-950">
+            ع
+          </span>
+        )}
+      </span>
+
+      {/* content column */}
+      <div className={`min-w-0 flex-1 space-y-1.5`}>
+        <div className="flex items-center gap-3 text-[10px] uppercase tracking-[0.22em] text-ink-500">
+          <span>{roleLabel}</span>
+          {!user && msg.content.trim().length > 0 && ttsAvailable && (
+            <button
+              type="button"
+              data-cursor="hover"
+              onClick={onPlay}
+              className={`flex items-center gap-1 rounded-full border px-2 py-0.5 transition ${playing ? "border-ember-500/60 text-ember-500" : "border-ink-700 text-ink-400 hover:border-ember-500/40 hover:text-ember-500"}`}
+              aria-pressed={playing}
+            >
+              <span aria-hidden>{playing ? "■" : "▶"}</span>
+              <span>{playLabel}</span>
+            </button>
+          )}
+        </div>
+        <div
+          className={`whitespace-pre-wrap break-words rounded-2xl px-4 py-3 ${user ? "bg-ember-500/10 text-ink-100 border border-ember-500/20" : "bg-ink-900/70 text-ink-100 border border-ink-700/70"}`}
+          style={{ fontSize: "clamp(0.95rem, 1.3vw, 1.1rem)", lineHeight: 1.65 }}
+        >
+          {msg.content}
+          {isStreaming && (
+            <span className="ms-1 inline-block h-4 w-[2px] animate-pulse bg-tide-400 align-middle" />
+          )}
+        </div>
+      </div>
+    </motion.div>
   );
 }
