@@ -98,26 +98,71 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     ...messages,
   ];
 
-  void aiMessages;
-  // High-quality only. If no Anthropic key, surface a polished "upgrading"
-  // message instead of falling back to a weaker model. Owner adds the key once
-  // via: wrangler pages secret put ANTHROPIC_API_KEY --project-name alkinani-site
-  if (!env.ANTHROPIC_API_KEY) {
-    return upgradingResponse();
+  // Premium upgrade path: if Claude key is present, use it (best quality).
+  if (env.ANTHROPIC_API_KEY) {
+    return await streamFromClaude(env, messages, SYSTEM_PROMPT);
   }
-  return await streamFromClaude(env, messages, SYSTEM_PROMPT);
-};
 
-function upgradingResponse(): Response {
-  const text = "نظام علي يحدّث نفسه الحين — رجعلي بعد دقيقة. أو لو مستعجل، واتساب مباشر علي: +966 59 998 8522";
+  // Always-on path: stream from Cloudflare Workers AI (Llama 3.3 70B).
+  // Heavy prompt engineering compensates for the smaller model.
+  const stream = (await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
+    messages: aiMessages,
+    stream: true,
+    max_tokens: 600,
+    temperature: 0.55,
+  })) as ReadableStream<Uint8Array>;
+
+  // Re-emit Cloudflare's OpenAI-style SSE as our own protocol.
+  const transformed = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const encoder = new TextEncoder();
+      const decoder = new TextDecoder();
+      const reader = stream.getReader();
+      let buf = "";
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split("\n");
+          buf = lines.pop() ?? "";
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) continue;
+            const data = trimmed.slice(5).trim();
+            if (data === "[DONE]") continue;
+            try {
+              const parsed = JSON.parse(data);
+              const delta = parsed.response ?? parsed.delta ?? "";
+              if (delta) {
+                controller.enqueue(
+                  encoder.encode(`event: delta\ndata: ${JSON.stringify({ delta })}\n\n`),
+                );
+              }
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+        controller.enqueue(encoder.encode(`event: done\ndata: ${JSON.stringify({ reason: "done" })}\n\n`));
+      } catch (err) {
+        controller.enqueue(
+          encoder.encode(`event: error\ndata: ${JSON.stringify({ error: String(err) })}\n\n`),
+        );
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
   const headers = new Headers({
     "Content-Type": "text/event-stream; charset=utf-8",
     "Cache-Control": "no-cache",
+    Connection: "keep-alive",
   });
   setCORS(headers);
-  const body = `event: delta\ndata: ${JSON.stringify({ delta: text })}\n\nevent: done\ndata: ${JSON.stringify({ reason: "upgrading" })}\n\n`;
-  return new Response(body, { status: 200, headers });
-}
+  return new Response(transformed, { headers });
+};
 
 export const onRequestGet: PagesFunction = async ({ request }) => {
   const url = new URL(request.url);
