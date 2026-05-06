@@ -41,7 +41,7 @@ export const copy = {
       { value: "5+", label: { ar: "سنوات في البحر", en: "Years offshore" } },
       { value: "3", label: { ar: "مشاريع ريادية", en: "Ventures founded" } },
       { value: "13", label: { ar: "Cloudflare Worker", en: "Cloudflare Workers" } },
-      { value: "24/7", label: { ar: "أنظمة تشتغل بدون يدي", en: "Systems running hands-free" } },
+      { value: "24/7", label: { ar: "أنظمة تشتغل بدون تدخّلي", en: "Systems running hands-free" } },
     ],
   },
   ventures: {
