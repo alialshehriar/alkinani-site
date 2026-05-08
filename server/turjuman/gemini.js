@@ -3,6 +3,7 @@
 // language.
 
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
+const UPLOAD_BASE = "https://generativelanguage.googleapis.com/upload/v1beta";
 
 const PROMPT = (targetLang) => `
 You are a professional subtitle translator.
@@ -41,7 +42,7 @@ export async function translateVideo({ apiKey, videoBytes, mimeType, targetLang 
   if (!apiKey) throw new Error("missing_gemini_key");
 
   // 1. Upload to the Files API (resumable upload protocol).
-  const startRes = await fetch(`${API_BASE}/files?key=${apiKey}`, {
+  const startRes = await fetch(`${UPLOAD_BASE}/files?key=${apiKey}`, {
     method: "POST",
     headers: {
       "X-Goog-Upload-Protocol": "resumable",
@@ -55,8 +56,13 @@ export async function translateVideo({ apiKey, videoBytes, mimeType, targetLang 
   if (!startRes.ok) {
     throw new Error(`gemini_upload_start: ${startRes.status} ${(await startRes.text()).slice(0, 200)}`);
   }
-  const uploadUrl = startRes.headers.get("X-Goog-Upload-URL");
-  if (!uploadUrl) throw new Error("gemini_upload_no_url");
+  const uploadUrl =
+    startRes.headers.get("X-Goog-Upload-URL") ??
+    startRes.headers.get("x-goog-upload-url");
+  if (!uploadUrl) {
+    const headerDump = [...startRes.headers.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+    throw new Error(`gemini_upload_no_url: headers=${headerDump.slice(0, 200)}`);
+  }
 
   const uploadRes = await fetch(uploadUrl, {
     method: "POST",
