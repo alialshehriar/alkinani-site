@@ -27,6 +27,9 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
+import rateLimit from "express-rate-limit";
+import { ensureSchema as ensureTurjumanSchema, makeQueries as makeTurjumanQueries, prune as pruneTurjuman } from "./turjuman/db.js";
+import { turjumanRouter } from "./turjuman/routes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || "3002", 10);
@@ -37,7 +40,11 @@ const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5";
 const KIMI_KEY = process.env.KIMI_API_KEY;
 const KIMI_BASE_URL = process.env.KIMI_BASE_URL || "https://api.moonshot.ai/v1";
-const KIMI_MODEL = process.env.KIMI_MODEL || "kimi-k2-turbo-preview";
+// kimi-k2.6 = reasoning model (fills reasoning_content first, then content).
+// Slower than turbo but voice is markedly more natural — uses real discourse
+// markers (والله، اقولك، شف) and varies sentence shape. The reasoning step
+// also catches dumb answers before they leave the model.
+const KIMI_MODEL = process.env.KIMI_MODEL || "kimi-k2.6";
 const ELEVEN_KEY = process.env.ELEVENLABS_API_KEY;
 const DB_PATH = process.env.LEADERBOARD_DB || path.join(__dirname, "leaderboard.db");
 
@@ -59,16 +66,56 @@ const PROMPTS = {
 
 const app = express();
 app.disable("x-powered-by");
+// Trust the loopback so X-Forwarded-For from the local nginx is honored,
+// without trusting headers from arbitrary clients (per pentest finding —
+// `cf-connecting-ip` / `x-real-ip` were spoofable end-to-end).
+app.set("trust proxy", "loopback");
 app.use(express.json({ limit: "256kb" }));
 
-// CORS — same-origin in production, but keep permissive for dev tools.
-app.use((_req, res, next) => {
-  res.set("Access-Control-Allow-Origin", "*");
+// CORS — only our origins. Pentest F6 found `*` allowed any third-party
+// site to burn AI/TTS budget via the visitor's session.
+const ALLOWED_ORIGINS = new Set([
+  "https://alkinani.live",
+  "https://www.alkinani.live",
+  "https://alkinani-site.pages.dev",
+  "http://localhost:5173",  // vite dev
+  "http://localhost:3002",
+]);
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    res.set("Access-Control-Allow-Origin", origin);
+    res.set("Vary", "Origin");
+  }
   res.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.set("Access-Control-Allow-Headers", "Content-Type");
+  res.set("Access-Control-Allow-Headers", "Content-Type, X-Radar-Secret");
   next();
 });
 app.options("/api/*", (_req, res) => res.sendStatus(204));
+
+// Rate limits — pentest A6/F7 found unbounded /api/chat + /api/tts could
+// drain Anthropic/Kimi/ElevenLabs budget. These caps assume real users
+// burst at human speed; bots get 429 quickly.
+const chatLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,           // 5 minutes
+  max: 30,                           // 30 chat msgs / 5 min / IP
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "too many requests, slow down for a sec." },
+});
+const ttsLimiter = rateLimit({
+  windowMs: 60 * 1000,               // 1 minute
+  max: 10,                           // 10 tts calls / minute / IP
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "TTS rate limit reached, try again in a minute." },
+});
+const writeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+});
 
 /* -------------------------- Helpers -------------------------- */
 
@@ -173,7 +220,8 @@ async function streamAnthropic(messages, send) {
     },
     body: JSON.stringify({
       model: ANTHROPIC_MODEL,
-      max_tokens: 600,
+      max_tokens: 900,
+      temperature: 0.6,
       stream: true,
       system: PROMPTS.chat,
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
@@ -219,8 +267,10 @@ async function streamKimi(messages, send) {
     },
     body: JSON.stringify({
       model: KIMI_MODEL,
-      max_tokens: 600,
-      temperature: 0.55,
+      max_tokens: 900,
+      temperature: 0.78,      // higher = more discourse markers, less robotic
+      top_p: 0.92,
+      // kimi-k2.6 rejects frequency_penalty/presence_penalty (HTTP 400).
       stream: true,
       messages: [
         { role: "system", content: PROMPTS.chat },
@@ -253,7 +303,7 @@ async function streamKimi(messages, send) {
   }
 }
 
-app.post("/api/chat", async (req, res) => {
+app.post("/api/chat", chatLimiter, async (req, res) => {
   const messages = (req.body?.messages || []).slice(-12);
   if (!Array.isArray(messages) || !messages.length) {
     return jsonError(res, "messages[] required", 400);
@@ -313,7 +363,7 @@ function profileFallback(lang) {
   };
 }
 
-app.post("/api/profile", async (req, res) => {
+app.post("/api/profile", writeLimiter, async (req, res) => {
   const lang = req.body?.lang === "en" ? "en" : "ar";
   const picks = Array.isArray(req.body?.picks) ? req.body.picks.slice(0, 12) : [];
   const leans = req.body?.leans || {};
@@ -354,7 +404,7 @@ function ideaFallback(idea, raw = "") {
   };
 }
 
-app.post("/api/idea", async (req, res) => {
+app.post("/api/idea", writeLimiter, async (req, res) => {
   const idea = String(req.body?.idea || "").trim();
   if (!idea) return jsonError(res, "idea required", 400);
   if (idea.length > 600) return jsonError(res, "idea too long (max 600)", 400);
@@ -383,7 +433,7 @@ function gradeFromScore(n) {
   return "F";
 }
 
-app.post("/api/pressure", async (req, res) => {
+app.post("/api/pressure", writeLimiter, async (req, res) => {
   const body = req.body || {};
   if (body.phase === "critique") {
     const idea = String(body.idea || "").trim();
@@ -531,7 +581,7 @@ async function gTTS(text, lang) {
   return Buffer.concat(bufs);
 }
 
-app.post("/api/tts", async (req, res) => {
+app.post("/api/tts", ttsLimiter, async (req, res) => {
   const text = String(req.body?.text || "").trim();
   if (!text) return jsonError(res, "text required", 400);
   if (text.length > 1500) return jsonError(res, "text too long (max 1500 chars)", 400);
@@ -573,6 +623,31 @@ db.exec(`
 `);
 // Add `country` column to existing tables (no-op if already there).
 try { db.exec("ALTER TABLE scores ADD COLUMN country TEXT"); } catch {}
+
+/* -------------------------- /api/turjuman/* -------------------------- */
+
+ensureTurjumanSchema(db);
+const turjumanQueries = makeTurjumanQueries(db);
+
+const TURJUMAN_BASE_URL = process.env.TURJUMAN_BASE_URL ||
+  (process.env.NODE_ENV === "production" ? "https://alkinani.live" : "http://localhost:3002");
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const RESEND_FROM = process.env.RESEND_FROM || "noreply@alkinani.live";
+
+app.use("/api/turjuman", turjumanRouter({
+  q: turjumanQueries,
+  resendApiKey: RESEND_API_KEY,
+  resendFrom: RESEND_FROM,
+  baseUrl: TURJUMAN_BASE_URL,
+  isProduction: process.env.NODE_ENV === "production",
+}));
+
+// Hourly prune of expired tokens + sessions.
+setInterval(() => {
+  try { pruneTurjuman(turjumanQueries); } catch (e) {
+    console.warn("[turjuman] prune failed:", e?.message ?? e);
+  }
+}, 60 * 60 * 1000);
 
 const VALID_GAMES = new Set(["sprint", "pulse", "reflex"]);
 // Per-game caps to short-circuit obvious cheats. Tune as the games evolve.
@@ -764,7 +839,7 @@ app.get("/api/leaderboard", (req, res) => {
   });
 });
 
-app.post("/api/leaderboard", async (req, res) => {
+app.post("/api/leaderboard", writeLimiter, async (req, res) => {
   const body = req.body || {};
   const game = String(body.game || "").toLowerCase();
   if (!VALID_GAMES.has(game)) return jsonError(res, "unknown game", 400);
@@ -816,6 +891,279 @@ app.post("/api/leaderboard", async (req, res) => {
   res.json({ ok: true, game, name, score, rank, total, country });
 });
 
+/* -------------------------- /api/radar -------------------------- */
+// AI Radar — predictive engine. Crawled by scripts/radar-crawl.mjs (cron, every
+// 5 min). Captures signals from X / Reddit / HackerNews / GitHub / ProductHunt
+// and computes velocity by comparing successive snapshots.
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS radar_signals (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    source        TEXT NOT NULL,
+    external_id   TEXT NOT NULL,
+    url           TEXT NOT NULL,
+    title         TEXT NOT NULL,
+    title_ar      TEXT,
+    author        TEXT,
+    thumbnail     TEXT,
+    body_excerpt  TEXT,
+    excerpt_ar    TEXT,
+    summary_ar    TEXT,
+    category      TEXT,
+    lang_detected TEXT,
+    raw_meta      TEXT,
+    engagement    REAL DEFAULT 0,
+    velocity      REAL DEFAULT 0,
+    authority     REAL DEFAULT 1,
+    cross_source  INTEGER DEFAULT 0,
+    score         REAL DEFAULT 0,
+    breaking      INTEGER DEFAULT 0,
+    posted_at     INTEGER,
+    first_seen    INTEGER NOT NULL,
+    last_updated  INTEGER NOT NULL,
+    translated_at INTEGER,
+    UNIQUE(source, external_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_radar_score
+    ON radar_signals(score DESC, last_updated DESC);
+  CREATE INDEX IF NOT EXISTS idx_radar_source_seen
+    ON radar_signals(source, first_seen DESC);
+  CREATE INDEX IF NOT EXISTS idx_radar_breaking
+    ON radar_signals(breaking DESC, score DESC);
+
+  CREATE TABLE IF NOT EXISTS radar_snapshots (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_id    INTEGER NOT NULL,
+    engagement   REAL NOT NULL,
+    captured_at  INTEGER NOT NULL,
+    FOREIGN KEY (signal_id) REFERENCES radar_signals(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_radar_snapshots_signal
+    ON radar_snapshots(signal_id, captured_at DESC);
+`);
+
+// Idempotent column adds — safe if table existed without these cols.
+for (const stmt of [
+  "ALTER TABLE radar_signals ADD COLUMN title_ar TEXT",
+  "ALTER TABLE radar_signals ADD COLUMN excerpt_ar TEXT",
+  "ALTER TABLE radar_signals ADD COLUMN summary_ar TEXT",
+  "ALTER TABLE radar_signals ADD COLUMN lang_detected TEXT",
+  "ALTER TABLE radar_signals ADD COLUMN translated_at INTEGER",
+  // Judge columns: Kimi-powered LLM novelty/impact scorer.
+  "ALTER TABLE radar_signals ADD COLUMN judge_novelty INTEGER",   // 1-10
+  "ALTER TABLE radar_signals ADD COLUMN judge_impact INTEGER",    // 1-10
+  "ALTER TABLE radar_signals ADD COLUMN judge_signal INTEGER",    // 1-10
+  "ALTER TABLE radar_signals ADD COLUMN judge_score REAL",        // composite 1-10
+  "ALTER TABLE radar_signals ADD COLUMN judge_verdict TEXT",      // brief reason in Arabic
+  "ALTER TABLE radar_signals ADD COLUMN judged_at INTEGER",
+]) { try { db.exec(stmt); } catch { /* already exists */ } }
+
+// Prune anything older than 7 days every server start (keeps DB small).
+db.exec(`DELETE FROM radar_signals WHERE last_updated < (strftime('%s','now') * 1000) - (7 * 86400000)`);
+
+const radarTopStmt = db.prepare(
+  `SELECT id, source, external_id, url, title, title_ar, author, thumbnail,
+          body_excerpt, excerpt_ar, summary_ar, category, lang_detected,
+          raw_meta, engagement, velocity, authority, cross_source,
+          score, breaking, posted_at, first_seen, last_updated, translated_at,
+          judge_novelty, judge_impact, judge_signal, judge_score, judge_verdict, judged_at
+   FROM radar_signals
+   WHERE last_updated > ?
+     AND (? = '*' OR source = ?)
+     AND (? = '*' OR category = ?)
+   ORDER BY (score + COALESCE(judge_score, 0) * 0.8) DESC, last_updated DESC
+   LIMIT ?`
+);
+
+const radarBreakingStmt = db.prepare(
+  `SELECT id, source, external_id, url, title, title_ar, author, thumbnail,
+          body_excerpt, excerpt_ar, summary_ar, category, lang_detected,
+          raw_meta, engagement, velocity, authority, cross_source,
+          score, breaking, posted_at, first_seen, last_updated, translated_at,
+          judge_novelty, judge_impact, judge_signal, judge_score, judge_verdict, judged_at
+   FROM radar_signals
+   WHERE last_updated > ? AND breaking = 1
+   ORDER BY velocity DESC, score DESC
+   LIMIT ?`
+);
+
+const radarStatsStmt = db.prepare(
+  `SELECT source, COUNT(*) AS n, MAX(last_updated) AS lastAt
+   FROM radar_signals
+   WHERE last_updated > ?
+   GROUP BY source`
+);
+
+function shapeRadarRow(r) {
+  let meta = null;
+  if (r.raw_meta) { try { meta = JSON.parse(r.raw_meta); } catch { /* ignore */ } }
+  return {
+    id: r.id,
+    source: r.source,
+    externalId: r.external_id,
+    url: r.url,
+    title: r.title,
+    titleAr: r.title_ar,
+    author: r.author,
+    thumbnail: r.thumbnail,
+    excerpt: r.body_excerpt,
+    excerptAr: r.excerpt_ar,
+    summaryAr: r.summary_ar,
+    category: r.category,
+    langDetected: r.lang_detected,
+    engagement: r.engagement,
+    velocity: r.velocity,
+    authority: r.authority,
+    crossSource: r.cross_source,
+    score: r.score,
+    breaking: !!r.breaking,
+    translated: !!r.translated_at,
+    judge: r.judged_at ? {
+      novelty: r.judge_novelty,
+      impact: r.judge_impact,
+      signal: r.judge_signal,
+      score: r.judge_score,
+      verdict: r.judge_verdict,
+      at: r.judged_at,
+    } : null,
+    meta,
+    postedAt: r.posted_at,
+    firstSeen: r.first_seen,
+    lastUpdated: r.last_updated,
+  };
+}
+
+app.get("/api/radar", (req, res) => {
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 30, 1), 100);
+  const source = String(req.query.source || "*").toLowerCase();
+  const category = String(req.query.category || "*").toLowerCase();
+  const sinceHours = Math.min(Math.max(parseInt(req.query.sinceHours, 10) || 24, 1), 168);
+  const since = Date.now() - sinceHours * 3600 * 1000;
+  const rows = radarTopStmt.all(since, source, source, category, category, limit);
+  const stats = radarStatsStmt.all(since);
+  res.json({
+    items: rows.map(shapeRadarRow),
+    stats: stats.reduce((acc, s) => ((acc[s.source] = { count: s.n, lastAt: s.lastAt }), acc), {}),
+    sinceHours,
+    fetchedAt: Date.now(),
+  });
+});
+
+app.get("/api/radar/breaking", (req, res) => {
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 12, 1), 50);
+  const since = Date.now() - 6 * 3600 * 1000;
+  const rows = radarBreakingStmt.all(since, limit);
+  res.json({ items: rows.map(shapeRadarRow), fetchedAt: Date.now() });
+});
+
+// Ingest pre-collected items from a remote agent (e.g. local Mac running
+// codad's agent-browser to scrape X). The agent does the network/auth work
+// the VPS can't (logged-in X session, residential IP). VPS just stores +
+// scores + translates the items.
+const radarIngestLookup = db.prepare(
+  "SELECT id, engagement, first_seen FROM radar_signals WHERE source = ? AND external_id = ?"
+);
+const radarIngestInsert = db.prepare(`
+  INSERT INTO radar_signals
+    (source, external_id, url, title, author, thumbnail, body_excerpt, category,
+     raw_meta, engagement, velocity, authority, cross_source, score, breaking,
+     posted_at, first_seen, last_updated)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+const radarIngestUpdate = db.prepare(`
+  UPDATE radar_signals
+  SET engagement = ?, authority = ?, raw_meta = ?,
+      thumbnail = COALESCE(?, thumbnail),
+      body_excerpt = COALESCE(?, body_excerpt),
+      last_updated = ?
+  WHERE id = ?
+`);
+const radarIngestSnap = db.prepare(
+  "INSERT INTO radar_snapshots (signal_id, engagement, captured_at) VALUES (?, ?, ?)"
+);
+
+app.post("/api/radar/ingest", express.json({ limit: "2mb" }), (req, res) => {
+  const secret = process.env.RADAR_REFRESH_SECRET;
+  if (!secret) return jsonError(res, "ingest disabled (no secret configured)", 503);
+  const provided = (req.headers["x-radar-secret"] || "").toString();
+  if (provided !== secret) return jsonError(res, "forbidden", 403);
+
+  const items = Array.isArray(req.body?.items) ? req.body.items : null;
+  if (!items) return jsonError(res, "expected { items: [...] }", 400);
+
+  const now = Date.now();
+  let inserted = 0, updated = 0, skipped = 0;
+  const tx = db.transaction(() => {
+    for (const it of items) {
+      if (!it || !it.source || !it.externalId || !it.url || !it.title) { skipped++; continue; }
+      const existing = radarIngestLookup.get(it.source, it.externalId);
+      const meta = JSON.stringify(it.meta || {});
+      if (existing) {
+        radarIngestUpdate.run(
+          it.engagement || 0, it.authority || 1, meta,
+          it.thumbnail || null, it.excerpt || null, now, existing.id
+        );
+        radarIngestSnap.run(existing.id, it.engagement || 0, now);
+        updated++;
+      } else {
+        const info = radarIngestInsert.run(
+          it.source, it.externalId, it.url, String(it.title).slice(0, 500),
+          it.author || null, it.thumbnail || null, it.excerpt || null,
+          it.category || null, meta,
+          it.engagement || 0, 0, it.authority || 1, it.crossSource || 0,
+          0, 0, it.postedAt || now, now, now
+        );
+        radarIngestSnap.run(info.lastInsertRowid, it.engagement || 0, now);
+        inserted++;
+      }
+    }
+  });
+  tx();
+  res.json({ ok: true, inserted, updated, skipped });
+});
+
+// Admin-triggered crawl. Auth via shared secret in RADAR_REFRESH_SECRET env.
+// Pentest pentest finding: previously had no mutex / cooldown — fork-and-forget
+// allowed a holder of the secret (or anyone after secret leak) to spawn
+// unbounded child processes → OOM the VPS. Mutex + 60s cooldown closes that.
+let _refreshInFlight = false;
+let _refreshLastStart = 0;
+app.post("/api/radar/refresh", async (req, res) => {
+  const secret = process.env.RADAR_REFRESH_SECRET;
+  if (!secret) return jsonError(res, "refresh disabled (no secret configured)", 503);
+  const provided = (req.headers["x-radar-secret"] || req.body?.secret || "").toString();
+  // Timing-safe compare so we don't leak length/prefix via response timing
+  let ok = false;
+  try {
+    const a = Buffer.from(provided);
+    const b = Buffer.from(secret);
+    ok = a.length === b.length && crypto.timingSafeEqual(a, b);
+  } catch { ok = false; }
+  if (!ok) return jsonError(res, "forbidden", 403);
+  if (_refreshInFlight) return jsonError(res, "refresh already in flight", 429);
+  if (Date.now() - _refreshLastStart < 60_000) return jsonError(res, "cooldown 60s", 429);
+  _refreshInFlight = true;
+  _refreshLastStart = Date.now();
+  // Fork-and-forget — actual crawl is heavy, return immediately.
+  try {
+    const { spawn } = await import("node:child_process");
+    const child = spawn(process.execPath, [path.join(__dirname, "..", "scripts", "radar-crawl.mjs")], {
+      detached: true,
+      stdio: "ignore",
+      env: { ...process.env, RADAR_DB: DB_PATH },
+    });
+    child.on("exit", () => { _refreshInFlight = false; });
+    child.on("error", () => { _refreshInFlight = false; });
+    // Safety: clear flag after 5 min even if exit signal misses.
+    setTimeout(() => { _refreshInFlight = false; }, 5 * 60_000).unref();
+    child.unref();
+    res.json({ ok: true, started: true });
+  } catch (err) {
+    _refreshInFlight = false;
+    return jsonError(res, "spawn failed: " + err.message, 500);
+  }
+});
+
 /* -------------------------- Static + SPA fallback -------------------------- */
 
 app.use(express.static(STATIC_DIR, {
@@ -841,4 +1189,6 @@ app.listen(PORT, "127.0.0.1", () => {
   console.log(`  ai backend: ${AI_BACKEND}${AI_BACKEND === "kimi" ? ` (${KIMI_MODEL})` : AI_BACKEND === "anthropic" ? ` (${ANTHROPIC_MODEL})` : ""}`);
   console.log(`  elevenlabs: ${ELEVEN_KEY ? "configured" : "missing (using gTTS)"}`);
   console.log(`  leaderboard db: ${DB_PATH}`);
+  const radarCount = db.prepare("SELECT COUNT(*) AS n FROM radar_signals").get().n;
+  console.log(`  radar signals: ${radarCount}`);
 });
