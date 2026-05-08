@@ -7,7 +7,7 @@ import { validateUrl, probe, download } from "./yt-dlp.js";
 import { translateVideo } from "./gemini.js";
 import { cuesToSrt } from "./srt.js";
 
-const MAX_DURATION_SEC = 30 * 60;
+const MAX_DURATION_SEC = 90 * 60;
 const MAX_FILESIZE_MB = 500;
 
 let _running = false;
@@ -50,7 +50,7 @@ async function runJob(job, jobsRoot, geminiApiKey, log) {
 
   const info = await probe(job.source_url);
   if (info.duration && info.duration > MAX_DURATION_SEC) {
-    throw new Error(`too_long:${Math.ceil(info.duration / 60)}min>30min`);
+    throw new Error(`too_long:${Math.ceil(info.duration / 60)}min>${MAX_DURATION_SEC / 60}min`);
   }
   if (info.filesizeMb && info.filesizeMb > MAX_FILESIZE_MB) {
     throw new Error(`too_large:${info.filesizeMb}MB>${MAX_FILESIZE_MB}MB`);

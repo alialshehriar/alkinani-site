@@ -58,9 +58,21 @@ export default function JobRow({ job }: Props) {
       )}
       {job.status === "error" && job.error_message && (
         <p className="mt-2 break-words text-xs text-rose-400">
-          {job.error_message}
+          {friendlyError(job.error_message)}
         </p>
       )}
     </div>
   );
+}
+
+function friendlyError(raw: string): string {
+  const m = /^too_long:(\d+)min>(\d+)min/.exec(raw);
+  if (m) return `الفيديو ${m[1]} دقيقة، الحد الأقصى ${m[2]} دقيقة.`;
+  if (raw.startsWith("too_large:")) return "الفيديو حجمه أكبر من ٥٠٠ ميغا.";
+  if (raw.includes("Sign in to confirm")) return "هذا المصدر يحجبنا حالياً (يحتاج تسجيل دخول). جرّب رابط من Vimeo, TED, X (تويتر), أو TikTok.";
+  if (raw.includes("HTTP Error 403")) return "المصدر يرفض التحميل (403).";
+  if (raw.startsWith("url_")) return "الرابط غير صالح أو غير مدعوم.";
+  if (raw.startsWith("gemini_")) return "تعذّر الترجمة عبر Gemini. حاول بعد قليل.";
+  if (raw.startsWith("yt-dlp")) return "تعذّر الوصول لمحتوى الفيديو. تأكد أن الرابط عام ومتاح.";
+  return raw.slice(0, 200);
 }
