@@ -14,7 +14,7 @@ const MAX_FILESIZE_MB = 500;
 
 let _running = false;
 
-export async function tickWorker({ q, jobsRoot, geminiApiKey, log }) {
+export async function tickWorker({ q, userQ, jobsRoot, geminiApiKey, log }) {
   if (_running) return;
   _running = true;
   try {
@@ -31,7 +31,7 @@ export async function tickWorker({ q, jobsRoot, geminiApiKey, log }) {
       log(`[turjuman] job ${job.id} done · ${charged} credits charged · ${isAnon ? "anon" : "user"}`);
       q.setJobDone.run(durationSec, charged, srtPath, mp4Path, Date.now(), job.id);
       if (isAnon) {
-        incrementAnonUsed(q, job.user_id.slice(5), charged);
+        incrementAnonUsed(userQ, job.user_id.slice(5), charged);
       } else {
         q.chargeCredits.run(charged, charged, charged, job.user_id);
       }

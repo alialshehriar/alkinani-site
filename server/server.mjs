@@ -666,6 +666,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 app.use("/api/turjuman/jobs", turjumanJobsRouter({
   q: turjumanQueries,
   jobsQ: turjumanJobsQueries,
+  isProduction: process.env.NODE_ENV === "production",
 }));
 
 // Worker tick every 5s — Plan B Phase 1 is single-in-flight.
@@ -673,6 +674,7 @@ setInterval(() => {
   if (!GEMINI_API_KEY) return; // skip if not configured
   tickTurjumanWorker({
     q: turjumanJobsQueries,
+    userQ: turjumanQueries,
     jobsRoot: TURJUMAN_JOBS_ROOT,
     geminiApiKey: GEMINI_API_KEY,
     log: (m) => console.log(m),
