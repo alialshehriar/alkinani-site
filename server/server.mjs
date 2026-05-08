@@ -30,6 +30,9 @@ import Database from "better-sqlite3";
 import rateLimit from "express-rate-limit";
 import { ensureSchema as ensureTurjumanSchema, makeQueries as makeTurjumanQueries, prune as pruneTurjuman } from "./turjuman/db.js";
 import { turjumanRouter } from "./turjuman/routes.js";
+import { ensureJobsSchema as ensureTurjumanJobsSchema, makeJobsQueries as makeTurjumanJobsQueries } from "./turjuman/jobs-db.js";
+import { jobsRouter as turjumanJobsRouter } from "./turjuman/jobs-routes.js";
+import { tickWorker as tickTurjumanWorker } from "./turjuman/pipeline.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || "3002", 10);
@@ -648,6 +651,33 @@ setInterval(() => {
     console.warn("[turjuman] prune failed:", e?.message ?? e);
   }
 }, 60 * 60 * 1000);
+
+/* -------------------------- Turjuman jobs pipeline -------------------------- */
+
+ensureTurjumanJobsSchema(db);
+const turjumanJobsQueries = makeTurjumanJobsQueries(db);
+
+const TURJUMAN_JOBS_ROOT = process.env.TURJUMAN_JOBS_ROOT
+  || path.join(__dirname, "turjuman-jobs");
+fs.mkdirSync(TURJUMAN_JOBS_ROOT, { recursive: true });
+
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+
+app.use("/api/turjuman/jobs", turjumanJobsRouter({
+  q: turjumanQueries,
+  jobsQ: turjumanJobsQueries,
+}));
+
+// Worker tick every 5s — Plan B Phase 1 is single-in-flight.
+setInterval(() => {
+  if (!GEMINI_API_KEY) return; // skip if not configured
+  tickTurjumanWorker({
+    q: turjumanJobsQueries,
+    jobsRoot: TURJUMAN_JOBS_ROOT,
+    geminiApiKey: GEMINI_API_KEY,
+    log: (m) => console.log(m),
+  }).catch((e) => console.error("[turjuman] tick error:", e));
+}, 5000);
 
 const VALID_GAMES = new Set(["sprint", "pulse", "reflex"]);
 // Per-game caps to short-circuit obvious cheats. Tune as the games evolve.

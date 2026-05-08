@@ -52,3 +52,51 @@ export function magicLinkErrorMessage(err: unknown): string {
   if (msg.includes("email_failed")) return "تعذر إرسال البريد. حاول بعد دقيقة.";
   return "حدث خطأ. حاول مرة أخرى.";
 }
+
+/* -------------------------- Jobs -------------------------- */
+
+export type JobStatus = "queued" | "processing" | "done" | "error";
+
+export type Job = {
+  id: string;
+  user_id: string;
+  source_url: string;
+  target_lang: string;
+  status: JobStatus;
+  duration_seconds: number | null;
+  credits_charged: number;
+  error_message: string | null;
+  output_srt_path: string | null;
+  created_at: number;
+  started_at: number | null;
+  completed_at: number | null;
+};
+
+export async function createJob(url: string, targetLang: string): Promise<Job> {
+  const data = await api<{ job: Job }>("/api/turjuman/jobs", {
+    method: "POST",
+    body: JSON.stringify({ url, target_lang: targetLang }),
+  });
+  return data.job;
+}
+
+export async function listJobs(): Promise<Job[]> {
+  const data = await api<{ jobs: Job[] }>("/api/turjuman/jobs");
+  return data.jobs;
+}
+
+export function srtDownloadUrl(id: string): string {
+  return `/api/turjuman/jobs/${id}/srt`;
+}
+
+export function jobErrorMessage(err: unknown): string {
+  const msg = err instanceof Error ? err.message : "";
+  if (msg.includes("url_invalid_url")) return "الرابط غير صالح.";
+  if (msg.includes("url_invalid_scheme")) return "الرابط يجب أن يبدأ بـ https.";
+  if (msg.includes("url_private_ip_blocked")) return "الرابط يشير لعنوان خاص.";
+  if (msg.includes("url_dns_resolve_failed")) return "تعذر الوصول للرابط.";
+  if (msg.includes("invalid_target_lang")) return "اللغة الهدف غير مدعومة.";
+  if (msg.includes("unauthenticated") || msg.includes("session_expired"))
+    return "انتهت الجلسة. سجّل الدخول مرة أخرى.";
+  return "حدث خطأ. حاول مرة أخرى.";
+}

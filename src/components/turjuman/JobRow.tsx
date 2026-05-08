@@ -1,0 +1,66 @@
+import { srtDownloadUrl, type Job } from "../../lib/turjuman";
+
+type Props = { job: Job };
+
+const STATUS_LABELS: Record<Job["status"], string> = {
+  queued: "في الطابور",
+  processing: "تترجم الآن…",
+  done: "جاهزة",
+  error: "فشل",
+};
+
+const STATUS_COLORS: Record<Job["status"], string> = {
+  queued: "text-ink-400",
+  processing: "text-ember-400",
+  done: "text-emerald-400",
+  error: "text-rose-400",
+};
+
+const TARGET_LABELS: Record<string, string> = {
+  ar: "عربي",
+  en: "English",
+  es: "Español",
+};
+
+export default function JobRow({ job }: Props) {
+  const created = new Date(job.created_at).toLocaleString("ar");
+  return (
+    <div className="rounded-lg border border-ink-700/40 bg-ink-900/40 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <p
+            dir="ltr"
+            className="truncate text-sm text-ink-300"
+            title={job.source_url}
+          >
+            {job.source_url}
+          </p>
+          <p className="mt-1 text-xs text-ink-500">
+            {created} · {TARGET_LABELS[job.target_lang] ?? job.target_lang}
+            {job.duration_seconds
+              ? ` · ${Math.ceil(job.duration_seconds / 60)} د`
+              : ""}
+          </p>
+        </div>
+        <span className={`shrink-0 text-xs ${STATUS_COLORS[job.status]}`}>
+          {STATUS_LABELS[job.status]}
+        </span>
+      </div>
+      {job.status === "done" && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <a
+            href={srtDownloadUrl(job.id)}
+            className="rounded-md border border-ember-400/40 bg-ember-400/10 px-3 py-1.5 text-xs text-ember-400 transition hover:bg-ember-400/20"
+          >
+            تحميل SRT
+          </a>
+        </div>
+      )}
+      {job.status === "error" && job.error_message && (
+        <p className="mt-2 break-words text-xs text-rose-400">
+          {job.error_message}
+        </p>
+      )}
+    </div>
+  );
+}
