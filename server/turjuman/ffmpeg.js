@@ -18,23 +18,30 @@ export function burnSubtitles({ videoPath, srtPath, outPath, targetLang }) {
     const font = FONTS[targetLang] ?? "Noto Sans";
 
     // ASS color spec: &HAABBGGRR
-    //   PrimaryColour = white opaque
-    //   OutlineColour = black opaque (border)
-    //   BackColour    = semi-transparent black box behind text
-    //   BorderStyle=1 = outline + drop shadow
+    //   PrimaryColour = white, fully opaque
+    //   OutlineColour = pure black for crisp border
+    //   BackColour    = semi-transparent black BOX behind the text
+    //   BorderStyle=3 = OPAQUE BOX (the BackColour fills behind the line) —
+    //                   far more readable on busy/colorful video frames than
+    //                   a thin outline. The text never blends into the bg.
     //   Alignment=2   = bottom center
-    //   MarginV=40    = lift off bottom edge
+    //   MarginV=60    = sit comfortably above the bottom edge
+    //   Outline=1, Shadow=0 = no extra outline/shadow on top of the box
     const style = [
       `FontName=${font}`,
-      "FontSize=20",
+      "FontSize=26",
+      "Bold=-1",
       "PrimaryColour=&H00FFFFFF",
       "OutlineColour=&H00000000",
-      "BackColour=&H80000000",
-      "BorderStyle=1",
-      "Outline=2",
-      "Shadow=1",
+      "BackColour=&HB0000000",
+      "BorderStyle=3",
+      "Outline=1",
+      "Shadow=0",
       "Alignment=2",
-      "MarginV=40",
+      "MarginV=60",
+      "MarginL=80",
+      "MarginR=80",
+      "Spacing=0",
     ].join(",");
 
     const filter = `subtitles=${escapeFilterPath(srtPath)}:charenc=UTF-8:force_style='${style}'`;

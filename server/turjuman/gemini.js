@@ -25,13 +25,23 @@ Language conventions:
 - Spanish (es): natural conversational Spanish.
 
 Rules:
-- Each cue ≤ 7 seconds and ≥ 0.6 seconds.
 - Each cue text ≤ 84 characters Latin OR ≤ 44 characters Arabic.
 - Break at natural sentence boundaries; do NOT break inside جار+مجرور or
   مضاف+إليه (Arabic).
 - Preserve product/brand names verbatim (Postgres, OpenAI, etc.).
 - Mark non-speech audio: ♪ for music, (laughter) / (ضحك) for laughter.
-- Output ONLY the JSON array. No prose, no markdown fences.
+
+Timing rules (very important):
+- Cue "start" = the EXACT moment the speaker BEGINS that line (don't lead in).
+- Cue "end"   = the moment the speaker FINISHES the line. Don't extend into
+  silence or into the next speaker's line.
+- Each cue ≥ 0.8 seconds and ≤ 6 seconds.
+- Tight short utterances (e.g. one-word agreements) keep their natural ≥1s
+  visible duration.
+- If two consecutive lines are spoken back-to-back, leave at least 0.1s gap
+  in your timestamps.
+
+Output ONLY the JSON array. No prose, no markdown fences.
 `.trim();
 
 /**

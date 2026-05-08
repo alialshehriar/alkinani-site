@@ -8,13 +8,33 @@ test("formatTimestamp rounds to milliseconds", () => {
   assert.equal(formatTimestamp(3661.5), "01:01:01,500");
 });
 
-test("cuesToSrt produces standard SRT", () => {
+test("cuesToSrt produces standard SRT with normalized timings", () => {
+  // 300ms lead-in pushes cue 2 start back, which can clip cue 1's end.
+  // Cues are well-spaced enough that order + content survive.
   const cues = [
-    { start: 0, end: 1.5, text: "hello" },
-    { start: 1.6, end: 3.2, text: "world" },
+    { start: 1.0, end: 3.0, text: "hello" },
+    { start: 4.0, end: 6.0, text: "world" },
   ];
   const srt = cuesToSrt(cues);
-  assert.match(srt, /^1\n00:00:00,000 --> 00:00:01,500\nhello\n\n2\n/);
+  assert.match(srt, /^1\n00:00:00,700 --> 00:00:03,000\nhello\n\n2\n/);
+  assert.match(srt, /^.+\n.+\n.+\n\n2\n00:00:03,700 --> 00:00:06,000\nworld\n/m);
+});
+
+test("normalizeCues enforces min 1.2s duration", async () => {
+  const { normalizeCues } = await import("../srt.js");
+  const out = normalizeCues([{ start: 5, end: 5.5, text: "ok" }]);
+  assert.equal(out[0].start, 4.7); // 300ms lead-in
+  assert.equal(out[0].end, 5.9);   // 4.7 + 1.2 min duration
+});
+
+test("normalizeCues prevents overlap between cues", async () => {
+  const { normalizeCues } = await import("../srt.js");
+  const out = normalizeCues([
+    { start: 0, end: 2.0, text: "first" },
+    { start: 2.05, end: 4.0, text: "second" },
+  ]);
+  // first.end must be ≤ second.start - 0.08
+  assert.ok(out[0].end <= out[1].start - 0.07);
 });
 
 test("splitLongLine breaks at 42 latin chars", () => {

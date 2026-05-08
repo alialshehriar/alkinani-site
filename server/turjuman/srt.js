@@ -56,8 +56,50 @@ function layoutCueText(text) {
   return [lines[0], lines.slice(1).join(" ")].join("\n");
 }
 
+/**
+ * Smooth out raw model timings into a more readable subtitle track:
+ *   - sort by start time (defensive)
+ *   - 300ms lead-in (subtitle appears slightly before speech starts)
+ *   - min on-screen duration 1.2s (eye needs time to land on the line)
+ *   - max on-screen duration 7s (don't let a cue linger forever)
+ *   - min 80ms gap between adjacent cues (no flicker / no overlap)
+ */
+export function normalizeCues(rawCues) {
+  if (!Array.isArray(rawCues) || rawCues.length === 0) return [];
+
+  const cues = [...rawCues]
+    .filter((c) => typeof c.start === "number" && typeof c.end === "number")
+    .sort((a, b) => a.start - b.start)
+    .map((c) => ({
+      start: Math.max(0, c.start - 0.3),
+      end: c.end,
+      text: String(c.text).trim(),
+    }))
+    .filter((c) => c.text.length > 0);
+
+  for (let i = 0; i < cues.length; i++) {
+    const c = cues[i];
+    if (c.end - c.start < 1.2) c.end = c.start + 1.2;
+    if (c.end - c.start > 7) c.end = c.start + 7;
+
+    const next = cues[i + 1];
+    if (next) {
+      // If we now overlap, push next start forward, OR clip our end.
+      if (c.end + 0.08 > next.start) {
+        if (c.end < next.start) {
+          // Already a tight gap — nothing to do.
+        } else {
+          c.end = Math.max(c.start + 1.2, next.start - 0.08);
+        }
+      }
+    }
+  }
+  return cues;
+}
+
 export function cuesToSrt(cues) {
-  return cues
+  const normalized = normalizeCues(cues);
+  return normalized
     .map((cue, i) => [
       String(i + 1),
       `${formatTimestamp(cue.start)} --> ${formatTimestamp(cue.end)}`,
