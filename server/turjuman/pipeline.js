@@ -6,6 +6,7 @@ import path from "node:path";
 import { validateUrl, probe, download } from "./yt-dlp.js";
 import { translateVideo } from "./gemini.js";
 import { cuesToSrt } from "./srt.js";
+import { burnSubtitles } from "./ffmpeg.js";
 
 const MAX_DURATION_SEC = 90 * 60;
 const MAX_FILESIZE_MB = 500;
@@ -24,9 +25,9 @@ export async function tickWorker({ q, jobsRoot, geminiApiKey, log }) {
     if (claim.changes !== 1) return;
 
     try {
-      const { srtPath, durationSec, charged } = await runJob(job, jobsRoot, geminiApiKey, log);
+      const { srtPath, mp4Path, durationSec, charged } = await runJob(job, jobsRoot, geminiApiKey, log);
       log(`[turjuman] job ${job.id} done · ${charged} credits charged`);
-      q.setJobDone.run(durationSec, charged, srtPath, Date.now(), job.id);
+      q.setJobDone.run(durationSec, charged, srtPath, mp4Path, Date.now(), job.id);
       q.chargeCredits.run(charged, charged, charged, job.user_id);
     } catch (e) {
       const msg = String(e?.message ?? e).slice(0, 500);
@@ -43,6 +44,7 @@ async function runJob(job, jobsRoot, geminiApiKey, log) {
   await fs.mkdir(dir, { recursive: true });
   const videoPath = path.join(dir, "source.mp4");
   const srtPath = path.join(dir, "translation.srt");
+  const mp4Path = path.join(dir, "translated.mp4");
 
   // Defense-in-depth — also enforced at API layer.
   const v = await validateUrl(job.source_url);
@@ -72,7 +74,12 @@ async function runJob(job, jobsRoot, geminiApiKey, log) {
 
   const srt = cuesToSrt(cues);
   await fs.writeFile(srtPath, srt, "utf8");
+
+  log(`[turjuman] burning subtitles into video for ${job.id}…`);
+  await burnSubtitles({ videoPath, srtPath, outPath: mp4Path, targetLang: job.target_lang });
+
+  // Source no longer needed — only keep the burned MP4 + SRT.
   await fs.unlink(videoPath).catch(() => {});
 
-  return { srtPath, durationSec, charged };
+  return { srtPath, mp4Path, durationSec, charged };
 }

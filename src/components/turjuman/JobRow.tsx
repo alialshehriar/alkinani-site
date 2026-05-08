@@ -1,4 +1,4 @@
-import { srtDownloadUrl, type Job } from "../../lib/turjuman";
+import { srtDownloadUrl, mp4DownloadUrl, type Job } from "../../lib/turjuman";
 
 type Props = { job: Job };
 
@@ -48,11 +48,19 @@ export default function JobRow({ job }: Props) {
       </div>
       {job.status === "done" && (
         <div className="mt-3 flex flex-wrap gap-2">
+          {job.output_mp4_path && (
+            <a
+              href={mp4DownloadUrl(job.id)}
+              className="rounded-md bg-ember-400 px-3 py-1.5 text-xs font-medium text-ink-950 transition hover:bg-ember-300"
+            >
+              ⬇ تحميل الفيديو مع الترجمة
+            </a>
+          )}
           <a
             href={srtDownloadUrl(job.id)}
             className="rounded-md border border-ember-400/40 bg-ember-400/10 px-3 py-1.5 text-xs text-ember-400 transition hover:bg-ember-400/20"
           >
-            تحميل SRT
+            ملف SRT فقط
           </a>
         </div>
       )}

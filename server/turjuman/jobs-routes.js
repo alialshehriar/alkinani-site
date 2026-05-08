@@ -64,5 +64,19 @@ export function jobsRouter({ q, jobsQ }) {
     }
   });
 
+  router.get("/:id/mp4", authenticate, async (req, res) => {
+    const job = jobsQ.findJob.get(req.params.id);
+    if (!job || job.user_id !== req.userId) return res.status(404).end();
+    if (!job.output_mp4_path) return res.status(409).json({ error: "not_ready" });
+    res.set("Content-Type", "video/mp4");
+    res.set(
+      "Content-Disposition",
+      `attachment; filename="turjuman-${job.id}.mp4"`
+    );
+    return res.sendFile(job.output_mp4_path, (err) => {
+      if (err && !res.headersSent) res.status(410).json({ error: "file_missing" });
+    });
+  });
+
   return router;
 }

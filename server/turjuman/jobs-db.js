@@ -22,6 +22,8 @@ export function ensureJobsSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_tj_jobs_user ON turjuman_jobs(user_id);
     CREATE INDEX IF NOT EXISTS idx_tj_jobs_status ON turjuman_jobs(status);
   `);
+  // Forward-compatible column adds (idempotent).
+  try { db.exec("ALTER TABLE turjuman_jobs ADD COLUMN output_mp4_path TEXT"); } catch {}
 }
 
 export function makeJobsQueries(db) {
@@ -46,7 +48,7 @@ export function makeJobsQueries(db) {
     setJobDone: db.prepare(`
       UPDATE turjuman_jobs SET status = 'done',
         duration_seconds = ?, credits_charged = ?,
-        output_srt_path = ?, completed_at = ?
+        output_srt_path = ?, output_mp4_path = ?, completed_at = ?
       WHERE id = ?
     `),
     setJobError: db.prepare(`

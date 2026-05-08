@@ -67,6 +67,7 @@ export type Job = {
   credits_charged: number;
   error_message: string | null;
   output_srt_path: string | null;
+  output_mp4_path: string | null;
   created_at: number;
   started_at: number | null;
   completed_at: number | null;
@@ -87,6 +88,10 @@ export async function listJobs(): Promise<Job[]> {
 
 export function srtDownloadUrl(id: string): string {
   return `/api/turjuman/jobs/${id}/srt`;
+}
+
+export function mp4DownloadUrl(id: string): string {
+  return `/api/turjuman/jobs/${id}/mp4`;
 }
 
 export function jobErrorMessage(err: unknown): string {
