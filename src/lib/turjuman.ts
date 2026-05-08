@@ -41,6 +41,17 @@ export async function logout(): Promise<void> {
   await api<{ ok: true }>("/api/turjuman/auth/logout", { method: "POST" });
 }
 
+export type Quota = {
+  kind: "user" | "anon" | "anon_fresh";
+  free_remaining?: number;
+  free_total?: number;
+  session_user_id?: string;
+};
+
+export async function fetchQuota(): Promise<Quota> {
+  return api<Quota>("/api/turjuman/jobs/quota/me");
+}
+
 /**
  * Translate an opaque magic-link error code to a user-facing Arabic message.
  */
@@ -96,12 +107,12 @@ export function mp4DownloadUrl(id: string): string {
 
 export function jobErrorMessage(err: unknown): string {
   const msg = err instanceof Error ? err.message : "";
+  if (msg.includes("anonymous_quota_exceeded")) return "QUOTA_EXCEEDED";
   if (msg.includes("url_invalid_url")) return "الرابط غير صالح.";
   if (msg.includes("url_invalid_scheme")) return "الرابط يجب أن يبدأ بـ https.";
   if (msg.includes("url_private_ip_blocked")) return "الرابط يشير لعنوان خاص.";
   if (msg.includes("url_dns_resolve_failed")) return "تعذر الوصول للرابط.";
   if (msg.includes("invalid_target_lang")) return "اللغة الهدف غير مدعومة.";
-  if (msg.includes("unauthenticated") || msg.includes("session_expired"))
-    return "انتهت الجلسة. سجّل الدخول مرة أخرى.";
+  if (msg.includes("session_expired")) return "انتهت الجلسة. سجّل الدخول مرة أخرى.";
   return "حدث خطأ. حاول مرة أخرى.";
 }

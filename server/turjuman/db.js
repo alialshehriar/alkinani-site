@@ -56,8 +56,18 @@ export function ensureSchema(db) {
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_tj_credits_user ON turjuman_credits_log(user_id);
+
+    CREATE TABLE IF NOT EXISTS turjuman_anonymous_quotas (
+      anon_id TEXT PRIMARY KEY,
+      ip TEXT,
+      minutes_used INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
   `);
 }
+
+export const ANON_FREE_MINUTES = 5;
+export const REGISTERED_MONTHLY_FREE_MINUTES = 10;
 
 export function makeQueries(db) {
   return {
@@ -115,7 +125,47 @@ export function makeQueries(db) {
     rateLimitReset: db.prepare(
       `UPDATE turjuman_rate_limits SET count = 1, window_start = ? WHERE key = ?`
     ),
+    findAnonQuota: db.prepare(
+      "SELECT * FROM turjuman_anonymous_quotas WHERE anon_id = ?"
+    ),
+    insertAnonQuota: db.prepare(
+      "INSERT INTO turjuman_anonymous_quotas (anon_id, ip, minutes_used, created_at) VALUES (?, ?, 0, ?)"
+    ),
+    incrementAnonQuota: db.prepare(
+      "UPDATE turjuman_anonymous_quotas SET minutes_used = minutes_used + ? WHERE anon_id = ?"
+    ),
   };
+}
+
+export function getOrCreateAnonQuota(q, anonId, ip) {
+  let quota = q.findAnonQuota.get(anonId);
+  if (!quota) {
+    q.insertAnonQuota.run(anonId, ip, Date.now());
+    quota = q.findAnonQuota.get(anonId);
+  }
+  // Anonymous jobs have user_id = "anon:<id>" — make sure a placeholder
+  // row exists in turjuman_users so the FK in turjuman_jobs is satisfied.
+  const phantomId = `anon:${anonId}`;
+  const existing = q.findUserById.get(phantomId);
+  if (!existing) {
+    const now = Date.now();
+    const next = new Date();
+    next.setUTCDate(1);
+    next.setUTCMonth(next.getUTCMonth() + 1);
+    next.setUTCHours(0, 0, 0, 0);
+    q.insertUser.run(
+      phantomId,
+      `${phantomId}@anon.turjuman.local`,
+      next.getTime(),
+      now,
+      now
+    );
+  }
+  return quota;
+}
+
+export function incrementAnonUsed(q, anonId, minutes) {
+  q.incrementAnonQuota.run(minutes, anonId);
 }
 
 // Compute the next "1st of next month UTC midnight" timestamp (ms).

@@ -7,8 +7,9 @@ import { validateUrl, probe, download } from "./yt-dlp.js";
 import { translateVideo } from "./gemini.js";
 import { cuesToSrt } from "./srt.js";
 import { burnSubtitles } from "./ffmpeg.js";
+import { incrementAnonUsed } from "./db.js";
 
-const MAX_DURATION_SEC = 90 * 60;
+const MAX_DURATION_SEC = 30 * 60;       // strict 30-min ceiling per clip
 const MAX_FILESIZE_MB = 500;
 
 let _running = false;
@@ -26,9 +27,14 @@ export async function tickWorker({ q, jobsRoot, geminiApiKey, log }) {
 
     try {
       const { srtPath, mp4Path, durationSec, charged } = await runJob(job, jobsRoot, geminiApiKey, log);
-      log(`[turjuman] job ${job.id} done · ${charged} credits charged`);
+      const isAnon = job.user_id?.startsWith("anon:");
+      log(`[turjuman] job ${job.id} done · ${charged} credits charged · ${isAnon ? "anon" : "user"}`);
       q.setJobDone.run(durationSec, charged, srtPath, mp4Path, Date.now(), job.id);
-      q.chargeCredits.run(charged, charged, charged, job.user_id);
+      if (isAnon) {
+        incrementAnonUsed(q, job.user_id.slice(5), charged);
+      } else {
+        q.chargeCredits.run(charged, charged, charged, job.user_id);
+      }
     } catch (e) {
       const msg = String(e?.message ?? e).slice(0, 500);
       log(`[turjuman] job ${job.id} failed: ${msg}`);

@@ -1,7 +1,12 @@
 import { useState } from "react";
 import { createJob, jobErrorMessage } from "../../lib/turjuman";
 
-type Props = { onJobCreated: () => void };
+type Props = {
+  onJobCreated: () => void;
+  onQuotaExceeded: () => void;
+  freeMinutesRemaining: number | null;
+  freeMinutesTotal: number | null;
+};
 
 const TARGETS = [
   { value: "ar", label: "عربي" },
@@ -9,7 +14,12 @@ const TARGETS = [
   { value: "es", label: "Español" },
 ];
 
-export default function NewJob({ onJobCreated }: Props) {
+export default function NewJob({
+  onJobCreated,
+  onQuotaExceeded,
+  freeMinutesRemaining,
+  freeMinutesTotal,
+}: Props) {
   const [url, setUrl] = useState("");
   const [target, setTarget] = useState("ar");
   const [submitting, setSubmitting] = useState(false);
@@ -24,7 +34,12 @@ export default function NewJob({ onJobCreated }: Props) {
       setUrl("");
       onJobCreated();
     } catch (err) {
-      setError(jobErrorMessage(err));
+      const msg = jobErrorMessage(err);
+      if (msg === "QUOTA_EXCEEDED") {
+        onQuotaExceeded();
+      } else {
+        setError(msg);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -67,9 +82,18 @@ export default function NewJob({ onJobCreated }: Props) {
         </button>
       </div>
       {error && <p className="text-sm text-rose-400">{error}</p>}
-      <p className="text-xs text-ink-500">
-        حد أقصى ٣٠ دقيقة، رابط فيديو عام (بدون رفع ملفات في الإصدار الحالي).
-      </p>
+      <div className="flex items-center justify-between text-xs text-ink-500">
+        <span>حد أقصى ٣٠ دقيقة لكل مقطع.</span>
+        {freeMinutesRemaining !== null && freeMinutesTotal !== null && (
+          <span>
+            متبقي{" "}
+            <span className="text-ember-400">
+              {freeMinutesRemaining}/{freeMinutesTotal}
+            </span>{" "}
+            دقيقة مجانية
+          </span>
+        )}
+      </div>
     </form>
   );
 }

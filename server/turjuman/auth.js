@@ -77,6 +77,32 @@ export function readSessionCookie(req) {
   return null;
 }
 
+/* Anonymous-trial cookie. Lets first-time visitors burn through a small
+   free quota before being asked to register. Lives 1 year. */
+export const ANON_COOKIE = "tj_anon";
+
+export function readAnonCookie(req) {
+  const header = req.headers?.cookie;
+  if (!header) return null;
+  for (const part of header.split(";")) {
+    const [name, ...rest] = part.trim().split("=");
+    if (name === ANON_COOKIE) return rest.join("=");
+  }
+  return null;
+}
+
+export function buildAnonCookie(value, secure) {
+  const attrs = [
+    `${ANON_COOKIE}=${value}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    "Max-Age=31536000", // 1 year
+  ];
+  if (secure) attrs.push("Secure");
+  return attrs.join("; ");
+}
+
 const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function isValidEmail(email) {
