@@ -14,10 +14,11 @@ export default function Nav({
   const [open, setOpen] = useState(false);
   const isAr = lang === "ar";
   const items = [
-    { id: "work", label: copy.nav.work, icon: "▦" },
-    { id: "lab", label: copy.nav.lab, icon: "🎮" },
-    { id: "ask", label: copy.nav.ask, icon: "✷" },
-    { id: "contact", label: copy.nav.contact, icon: "↗" },
+    { id: "work", label: copy.nav.work, icon: "▦", href: "#work" },
+    { id: "lab", label: copy.nav.lab, icon: "🎮", href: "#lab" },
+    { id: "tools", label: copy.nav.tools, icon: "▣", href: "/tools" },
+    { id: "ask", label: copy.nav.ask, icon: "✷", href: "#ask" },
+    { id: "contact", label: copy.nav.contact, icon: "↗", href: "#contact" },
   ];
 
   // Lock body scroll when drawer is open
@@ -61,7 +62,7 @@ export default function Nav({
             {items.map((it) => (
               <a
                 key={it.id}
-                href={`#${it.id}`}
+                href={it.href}
                 data-cursor="hover"
                 className="text-sm text-ink-300 transition hover:text-ink-100"
               >
@@ -116,7 +117,7 @@ export default function Nav({
                     initial={{ opacity: 0, x: isAr ? 8 : -8 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ duration: 0.35, delay: 0.05 + i * 0.04 }}
-                    href={`#${it.id}`}
+                    href={it.href}
                     onClick={() => setOpen(false)}
                     className="group flex items-center justify-between gap-4 px-5 py-4 transition hover:bg-ink-800/50 active:bg-ember-500/10"
                   >

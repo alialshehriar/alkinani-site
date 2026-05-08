@@ -5,11 +5,12 @@ export const copy = {
     work: { ar: "الأعمال", en: "Work" },
     method: { ar: "الطريقة", en: "Method" },
     lab: { ar: "العب", en: "Play" },
+    tools: { ar: "أدوات", en: "Tools" },
     ask: { ar: "اسألني", en: "Ask" },
     contact: { ar: "تواصل", en: "Contact" },
   },
   hero: {
-    eyebrow: { ar: "مهندس · مؤسس · بنّاء أنظمة", en: "Engineer · Founder · Systems Builder" },
+    eyebrow: { ar: "مؤسس · بنّاء أنظمة · صائد إشارات", en: "Founder · Systems Builder · Signal Hunter" },
     name: { ar: "علي الكناني", en: "Ali Alkinani" },
     transliteration: { ar: "Ali Alkinani", en: "علي الكناني" },
     tagline: {
@@ -47,8 +48,8 @@ export const copy = {
   ventures: {
     section: { ar: "الأعمال", en: "Ventures" },
     title: {
-      ar: "ثلاثة منتجات. هندسة واحدة.",
-      en: "Three products. One engineering mind.",
+      ar: "ثلاثة منتجات. عقل واحد يبنيها.",
+      en: "Three products. One mind building them.",
     },
     items: [
       {
@@ -158,8 +159,8 @@ export const copy = {
       en: "If you have a serious project, reach out.",
     },
     sub: {
-      ar: "ما أرد على كل رسالة. أرد على الرسائل المحددة.",
-      en: "I don't reply to every message. I reply to the specific ones.",
+      ar: "اكتب لي عن المشروع — وش تبني، لمين، وفي أي مرحلة. كل ما الصورة وضحت، الرد أنفع.",
+      en: "Tell me the whole story — what you're building, for whom, what stage. The clearer the story, the more useful the reply.",
     },
     channels: [
       { label: "Email", value: "ali.alshehri.ar@gmail.com", href: "mailto:ali.alshehri.ar@gmail.com" },
