@@ -9,35 +9,39 @@
 
 ## 1. Vision
 
-A world-class video translation tool. The user pastes a link or uploads a video, gets back professional, context-aware subtitles in their target language. Quality competes with human translation. Lives inside `alkinani.live` as part of a "Tools by Ali" collection with a games-style switcher.
+A high-quality video translation tool. The user pastes a link or uploads a video, gets back context-aware subtitles in their target language. Lives inside `alkinani.live` as part of a "Tools by Ali" collection with a games-style switcher.
 
-**Quality bar**: subtitles that respect story context, speaker identity, idioms, technical terminology, and cultural nuance — beyond what any single existing service produces.
+**Phase 1 quality bar**: context-aware subtitles measurably better than YouTube auto-translate or single-shot Whisper for Arabic dialects, with Netflix/BBC formatting standards.
 
-**Business model**: 2 free videos per month, then paid credit packs in SAR. Healthy 50%+ profit margin.
+**Phase 2 quality bar** ("quality polish"): subtitles that preserve story context, speaker identity, entity consistency, idioms, and cultural nuance via the full 6-tier CPL. The "competes with human translation" claim is reserved for Phase 2 and is gated on blind comparison fixtures (5 dialect samples vs. 3 named competitors) producing measurable preference.
+
+**Business model**: 2 free videos per month, then paid credit packs in SAR. Profit margin sensitive to actual user video-length distribution — see Section 8.4 for sensitivity analysis.
 
 ---
 
 ## 2. Scope (v1)
 
-**In scope**:
+**In scope (Phase 1 MVP)**:
 - Web app at `alkinani.live/tools/turjuman` and `alkinani.live/turjuman`
 - Tools collection page at `alkinani.live/tools` with switcher between Turjuman and Radar (existing news tool)
 - Source: any video link (1900+ sites via yt-dlp, with Cobalt fallback) OR direct file upload
 - Auto-detect source language; user picks target language
 - Output: interactive player + burned-in MP4 + SRT + VTT
-- 6-layer Context Preservation Layer (CPL) for professional translation quality
+- **CPL tiers 1, 4, 5 only in Phase 1.** Tiers 2 (story summary), 3 (entity ledger), 6 (glossary) ship in Phase 2 as the "quality polish" milestone.
 - Hybrid model stack (Gemini 2.5 Pro for short videos, ElevenLabs Scribe + Claude Sonnet 4.6 for longer)
-- Magic Link auth (email only, no passwords)
-- Lemon Squeezy payments, credit-pack model in SAR
+- Magic Link auth (email only, no passwords) — single-use 15-min token, HttpOnly+Secure session cookie, 30-day session with sliding extension
+- Lemon Squeezy payments, credit-pack model in SAR — webhook HMAC signature verification required
 - 3 paid tiers + free tier
 - Credits expire after 6 months
 
-**Out of scope (deferred to v2)**:
-- Telegram bot
+**Out of scope (deferred to later phases)**:
+- Telegram bot (Phase 3)
 - Subscription model (only one-off credit packs in v1)
+- Cookie/session injection for login-walled content (deferred until standalone security design completes)
 - Self-hosted local model option (free tier with watermark)
-- Fine-tuning Whisper on dialect data
+- Fine-tuning ElevenLabs Scribe or Whisper on dialect data (Phase 4)
 - Speaker voice cloning / dubbing
+- White-label / enterprise tier (separate spec; not in this document's scope)
 
 ---
 
@@ -85,9 +89,11 @@ A world-class video translation tool. The user pastes a link or uploads a video,
 │    4. Router decides:                                        │
 │         video < 5 min?                                       │
 │           → Gemini 2.5 Pro multimodal (single call)          │
+│             with CPL tiers 1+5 injected as system prompt    │
 │         else:                                                │
-│           → ElevenLabs Scribe + Claude (full CPL)            │
-│    5. CPL (6 tiers) for long path                            │
+│           → ElevenLabs Scribe + Claude (full Phase-1 CPL:   │
+│             tiers 1, 4, 5 — tiers 2/3/6 in Phase 2)         │
+│    5. CPL (Phase-1: tiers 1+4+5) for long path               │
 │    6. SRT formatter (Netflix/BBC standards)                  │
 │    7. ffmpeg burn → final.mp4                                │
 │    8. Upload outputs → R2                                    │
@@ -143,16 +149,17 @@ The competitive moat. For every line being translated, the translator receives:
 
 ## 5. Source Acquisition Strategy
 
-The tool must never tell the user "I cannot reach this video." Four-tier extraction:
+Three-tier extraction in v1. Worker MUST validate every submitted URL: scheme allowlist (`https://` only), DNS-resolve, reject RFC-1918 / loopback / link-local / multicast IPs (SSRF protection) **before** dispatching to the pipeline.
 
 | Tier | Tool | Coverage |
 |---|---|---|
 | 1 | `yt-dlp` (auto-updated daily) | 1900+ sites: YouTube, TikTok, IG, X, LinkedIn, Reddit, Vimeo, etc. |
 | 2 | Cobalt API | Captures TikTok/IG that yt-dlp misses |
-| 3 | Cookie / session injection (via headless Chrome) | Login-walled content (user provides session if needed) |
-| 4 | Direct file upload (always available) | Final user safety net |
+| 3 | Direct file upload (always available) | Login-walled or unsupported content — user safety net |
 
-DRM-protected streams (Netflix, Shahid, Disney+) are explicitly out of scope.
+**Login-walled content** (private videos requiring auth): user is told `هذا الفيديو يحتاج تسجيل دخول — حمّله وارفعه مباشرة.` (Tier 3 upload). Cookie/session injection is **explicitly deferred** until a dedicated credential-handling security design is completed and reviewed.
+
+**DRM-protected streams** (Netflix, Shahid, Disney+) are out of scope. Metadata probe blocks known DRM platforms; uploaded copies of DRM content remain out-of-scope per ToS (legal mitigation only — no technical enforcement at upload).
 
 ---
 
@@ -197,11 +204,24 @@ Full player capabilities (target end state):
 - Right rail: scrollable list of timestamped subtitle lines, current line highlighted, click to seek
 - Each line has an edit (✏) button → opens inline textarea, save updates SRT + regenerates burned MP4 in background *(Phase 2)*
 - Lines with low translator confidence (<80%) shown with a yellow indicator and a tooltip ("الموديل غير واثق — راجع") *(Phase 2)*
-- Subtitle styling controls: size, position, color
+- Subtitle styling controls: size, position, color *(Phase 2; Phase 1 ships sensible defaults — white text, bottom center, 90% opacity, white outline 2px)*
 - Three downloads: MP4 (burned), SRT, VTT
-- "Share" button copies a 30-day public R2 URL
+- "Share" button copies an **auth-required short-lived signed URL** (15-min validity, regenerated on demand). Public unauthenticated 30-day URLs were dropped due to copyright/bandwidth liability.
+- **Right-rail `dir` attribute** tracks the **target language** of the job (not the UI language). Each subtitle cue sets its own `dir` per language. Inline editor textarea matches target language direction.
 
-**Phase 1 player** has only the read-only view: video, right-rail navigation, downloads, and share. Inline editing and confidence indicators arrive in Phase 2.
+**Phase 1 player** has only the read-only view: video, right-rail navigation, downloads, and share. Inline editing, confidence indicators, and styling controls arrive in Phase 2.
+
+**Mobile**: drop zone collapses to a tap-to-upload affordance; right rail moves below the video as a collapsible sheet; touch targets are ≥44pt.
+
+**Error states** (each gets explicit visual treatment):
+
+| State | UI |
+|---|---|
+| Player loading (R2 fetch) | Skeleton right-rail + buffering video poster |
+| Player error (R2 expired/burn failed) | Inline error card with "Re-download SRT" fallback button |
+| Source unreachable | Inline error card replaces processing UI; CTA "Upload file instead" |
+| Pipeline error (any pipeline crash) | Inline error card; CTA "Retry" (auto-retry already attempted once); credit refund visible |
+| Out of credits mid-flow | Modal with pack options; partially uploaded file kept on R2 with 1-hour grace period to complete purchase |
 
 ### 6.4 User Edits → Learning Loop
 
@@ -250,7 +270,12 @@ Enforced by a dedicated formatter step (after translation, before burning):
 - Credits expire **6 months** from purchase.
 - Free credits reset on the 1st of each calendar month.
 - Free credits do not stack (max 2 at any time).
-- Refund policy: any unused credit < 30 days old, no questions asked.
+- **Refund policy** — written precisely to prevent abuse:
+  - **Pack with 0 credits consumed**: full refund within 14 days, automated.
+  - **Pack with credits consumed**: pro-rata refund of unused credits at the per-credit price (e.g., Studio Pack 149 SAR / 200 = 0.745 SAR per credit), within 7 days of purchase only.
+  - **No refund** after 30 days regardless of credit balance.
+  - Accounts flagged for >1 refund go to manual review queue.
+  - Chargebacks tracked separately; >1% chargeback rate is an account-level emergency (Lemon Squeezy fraud signals monitored).
 
 ### 8.4 Cost Model (per 5-minute video, hybrid stack)
 
@@ -274,8 +299,10 @@ Enforced by a dedicated formatter step (after translation, before burning):
 
 **Magic Link Email only.** No passwords, no social login (in v1).
 
-- User enters email → Worker generates one-time token → email sent via Resend → link signs the user in for 30 days
-- Sessions stored in Cloudflare KV with sliding expiration
+- User enters email → Worker generates **single-use token, 15-minute TTL** → email sent via Resend → link redeems token (deleted from KV on first use) → server sets **HttpOnly + Secure + SameSite=Lax** session cookie
+- Session: 30-day max with sliding 7-day extension on use; absolute hard cap 90 days; `/api/logout` endpoint deletes the KV session immediately
+- **Anti-Sybil**: per-IP rate limit on magic-link requests (5/hour), constant-time token comparison, disposable-email-domain blocklist (mailinator, tempmail, etc.), free-tier quota tracked by `email + IP /24` to make multi-account abuse expensive
+- Resend requires SPF/DKIM/DMARC on `alkinani.live` (DNS prerequisite, not optional)
 
 ### 9.2 Account Model (D1)
 
@@ -294,8 +321,11 @@ credits_log (
   id TEXT PRIMARY KEY,
   user_id TEXT REFERENCES users(id),
   delta INTEGER NOT NULL,         -- positive for purchase, negative for use
-  reason TEXT,                    -- 'starter_pack' | 'job:abc123' | 'free_grant'
-  expires_at TEXT,                -- 6 months from purchase
+  reason TEXT,                    -- 'starter_pack' | 'job:abc123' | 'free_grant' | 'refund'
+  expires_at TEXT,                -- 6 months from purchase (NULL for usage rows)
+  lemon_order_id TEXT UNIQUE,     -- idempotency key for webhook processing
+  refunded_at TEXT,               -- timestamp when this row was refunded (NULL if not)
+  refund_amount_sar REAL,         -- pro-rata refund amount
   created_at TEXT
 )
 
@@ -320,13 +350,15 @@ jobs (
 
 corrections (
   id TEXT PRIMARY KEY,
-  job_id TEXT REFERENCES jobs(id),
+  job_id TEXT,                    -- not enforced FK; job may be deleted at 30 days
+  user_id TEXT,                   -- nullable for anonymized rows
   cue_index INTEGER,
   original_text TEXT,
   corrected_text TEXT,
   source_lang TEXT,
   target_lang TEXT,
-  created_at TEXT
+  created_at TEXT,
+  anonymized_at TEXT              -- set 30 days after job; clears user_id+job_id
 )
 ```
 
@@ -341,9 +373,14 @@ corrections (
 ### 10.2 Flow
 
 1. User clicks "Buy Starter Pack" → Worker creates Lemon Squeezy checkout session → redirect
-2. Lemon Squeezy hosts payment, supports mada via card (Saudi-ready)
-3. On success, Lemon Squeezy webhook → Worker → adds credits to user with `expires_at = now + 6 months`
-4. User redirected back to `/tools/turjuman` with a success toast
+2. Lemon Squeezy hosts payment. **Mada support must be verified with a live ~14 SAR test transaction before launch.** Risk register flags this — Moyasar fallback wired in v1, not deferred.
+3. On success, Lemon Squeezy webhook → Worker:
+   - **MANDATORY**: verify `X-Signature` HMAC-SHA256 against the webhook secret stored in CF Worker secret (via `wrangler secret put`)
+   - Reject if request timestamp is older than 5 minutes (replay protection)
+   - Look up `order_id` in `credits_log.lemon_order_id` (new column) — if exists, no-op (idempotency)
+   - Otherwise insert credit row with `expires_at = now + 6 months` and `lemon_order_id` set
+4. Webhook handlers also process `order_refunded` events: locate the original order via `lemon_order_id`, mark it `refunded`, deduct unconsumed credits.
+5. User redirected back to `/tools/turjuman` with a success toast — credit balance visibly updated; "credits applying..." spinner shown if webhook hasn't fired within 3s of redirect.
 
 ### 10.3 Products in Lemon Squeezy Dashboard
 
@@ -374,13 +411,16 @@ Each product's webhook body identifies which pack via SKU.
 
 | Limit | Value | Reason |
 |---|---|---|
-| Max video length | 90 minutes | Cost control + quality consistency |
-| Max upload size | 2 GB | R2 economics |
-| Max concurrent jobs per user | 2 | Fair queue for everyone |
-| Job retention | 30 days | Storage cost |
-| Free credits per month | 2 | Real product trial without abuse |
-| Supported source languages | 99 (Whisper-supported) | — |
-| Supported target languages | 45 (Claude best-supported) | — |
+| Max video length | **30 minutes in Phase 1** (raised to 90 in Phase 2 only after cost economics validated) | Cost control + quality consistency |
+| Max upload size | 1 GB Phase 1 (2 GB once R2 multipart upload state machine ships) | R2 + Worker request limits |
+| Max concurrent jobs per user | 2 | Fair queue per-user |
+| Max global concurrent jobs | 4 (CPX31 capacity ceiling) | Hardware bound; queue depth visible to user |
+| Job retention | 30 days (auto-deletes source MP4, output MP4, SRT, VTT, transcript JSON) | Storage cost + DMCA hygiene |
+| Corrections retention | 30 days raw → anonymized indefinitely (user_id+job_id stripped, language-pair text only) | PDPL data minimization |
+| Free credits per month | 2, gated by `email + IP/24` quota | Real product trial without abuse |
+| Magic-link rate limit | 5 emails / IP / hour | Anti-Sybil |
+| Supported source languages | 99 (Scribe-supported) | — |
+| Supported target languages | **3 in Phase 1: Arabic, English, Spanish.** 45 total once demand justifies expansion. | Concentrate quality investment |
 
 ---
 
@@ -415,18 +455,25 @@ Fixture videos: 1-min English tech, 5-min Najdi vlog, 10-min Egyptian comedy, 30
 
 ## 15. Phasing
 
-### Phase 1 — MVP (target: 2 weeks)
+### Phase 1 — MVP (revised target: **4 weeks**, not 2 — 2 weeks was scope-blind per scope-guardian review)
 
-- Tools hub at `/tools` with switcher
-- Turjuman page with link/upload UI
-- Magic Link auth
+- Tools hub at `/tools` with switcher (reuses `PlayLab` pattern; nav gets a new entry pointing to `/tools`)
+- Turjuman page with link/upload UI (mobile-aware drop zone)
+- Magic Link auth + anti-Sybil controls (Section 9.1)
 - Hybrid pipeline (Gemini for short, Scribe+Claude for long), CPL tiers 1, 4, 5 only
 - Subtitle formatter (Netflix-grade)
 - Interactive player with view + download (no inline edit yet)
-- Lemon Squeezy integration with all 3 tiers
+- Lemon Squeezy integration with all 3 tiers + Moyasar fallback wired
 - Free 2/month enforcement
+- Pre-launch fixture benchmark: Scribe vs Whisper-large-v3 vs Gemini on 5 dialect samples (Section 17 risk gate — must pass before lock-in)
+- Live mada test transaction on Lemon Squeezy (Section 17 risk gate)
 
-**Definition of done**: a stranger can sign up, paste a YouTube link, get a downloadable MP4 with quality subtitles in under 10 minutes for a 5-minute video, on the free tier.
+**Definition of done**:
+1. A stranger can sign up, paste a YouTube link, get a downloadable MP4 with quality subtitles in under 10 minutes for a 5-minute video, on the free tier.
+2. CPX31 benchmark passes on 5/10/30-min Najdi/Hijazi fixtures: end-to-end latency ≤ 2× video duration on long path, ≤ 1× on short path.
+3. Mada test purchase succeeds via Lemon Squeezy.
+4. Pre-launch quality A/B (Section 14): Turjuman SRT scored higher than YouTube auto-translate by 3 of 3 blind raters on 3 of 5 fixtures.
+5. Distribution preflight: 1 launch X thread drafted with demo video; 1 invite to @o0a98 audience.
 
 ### Phase 2 — Quality polish (week 3-4)
 
@@ -446,9 +493,9 @@ Fixture videos: 1-min English tech, 5-min Najdi vlog, 10-min Egyptian comedy, 30
 
 ### Phase 4 — Defensibility (month 2-3)
 
-- Fine-tune Whisper on aggregated user corrections (LoRA, ~$30 one-time)
+- Fine-tune the Phase-1 ASR engine (Scribe via API fine-tuning if available, else swap in a custom Whisper-LoRA built on aggregated user corrections, ~$30 one-time GPU run)
 - Custom dialect-specific glossaries (Najdi, Hijazi, Egyptian, Levantine)
-- White-label / enterprise tier
+- (White-label / enterprise tier removed from this spec — separate document if it ever happens.)
 
 ---
 
@@ -468,12 +515,18 @@ These don't change the design; they're tactical and will be decided when impleme
 
 | Risk | Likelihood | Mitigation |
 |---|---|---|
-| Lemon Squeezy doesn't process mada cards reliably | Medium | Add Moyasar as fallback in Phase 2 |
-| Hetzner CPU is too slow for >30-min videos at scale | Medium | Switch to Hetzner GPU tier when concurrent jobs exceed 5 |
-| Source platform breaks yt-dlp extractor | High (recurring) | Daily yt-dlp upgrade cron + Cobalt fallback + clear error UX |
+| Lemon Squeezy doesn't process mada cards reliably | **High** | Live test transaction before launch; Moyasar fallback wired in **Phase 1**, not deferred |
+| Hetzner CPX31 cannot meet `<10 min for 5-min video` DoD | **High** | Benchmark on real 5/10/30-min fixtures before launch lock; if missed, upgrade to CPX41 (4 vCPU/8GB) or drop Demucs from short path |
+| Source platform breaks yt-dlp extractor | High (recurring) | Daily yt-dlp upgrade cron + Cobalt fallback + Tier 3 upload safety net |
+| ElevenLabs Scribe Najdi/Hijazi WER is poor | **High** | Pre-launch fixture benchmark: Scribe vs Whisper-large-v3 vs Gemini multimodal on 30s Najdi/Hijazi/Levantine clips. Pick winner per WER + cost |
 | Translation quality complaints from edge dialects | Medium | Manual glossary expansion + correction loop feeds future fine-tune |
-| User uploads copyrighted content for translation | Low (legal) | Terms of service: user must own or have rights; auto-delete after 30 days |
-| Cost per video exceeds estimate | Medium | Hard cap on max video length; per-user concurrency limit |
+| User uploads copyrighted content | **Medium** (not low) | Terms of service + auto-delete source MP4 at 30 days + register a DMCA agent + takedown endpoint at `/dmca` |
+| Cost per video exceeds estimate (long videos via Studio Pack) | **High** | Phase 1 caps video length at 30 minutes. Studio Pack capped at total 1500 minutes of video translation in addition to credit count |
+| Free tier multi-account abuse | **High** | Email + IP/24 quota tracking, disposable-email blocklist, IP rate limit on magic-link |
+| 30-day public R2 share URL bandwidth cost on virality | **Medium** | Replaced with auth-required signed URLs (15-min validity); shareable embed page served via Cloudflare cache |
+| WebSocket disconnect mid-job | Medium | SSE fallback + polling fallback; job state always recoverable from D1 |
+| API key compromise | Medium | All keys in CF Worker secrets / Hetzner secrets manager; rotated quarterly; gitleaks pre-commit hook in CI |
+| SSRF via user-submitted URL | High | URL scheme allowlist + DNS-resolve + reject private IP ranges before pipeline dispatch |
 
 ---
 
