@@ -48,7 +48,7 @@ export function magicLinkErrorMessage(err: unknown): string {
   const msg = err instanceof Error ? err.message : "";
   if (msg.includes("disposable_email")) return "بريد مؤقت غير مدعوم.";
   if (msg.includes("invalid_email")) return "صيغة البريد غير صحيحة.";
-  if (msg.includes("rate_limited")) return "حاول بعد ساعة، تم تجاوز الحد.";
+  if (msg.includes("rate_limited")) return "أرسلنا رابطاً قبل قليل. تحقّق من بريدك أو حاول بعد ساعة.";
   if (msg.includes("email_failed")) return "تعذر إرسال البريد. حاول بعد دقيقة.";
   return "حدث خطأ. حاول مرة أخرى.";
 }

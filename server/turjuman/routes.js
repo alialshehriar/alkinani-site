@@ -40,9 +40,10 @@ export function turjumanRouter({
     if (!isValidEmail(email)) return res.status(400).json({ error: "invalid_email" });
     if (isDisposable(email)) return res.status(400).json({ error: "disposable_email" });
 
-    // Per-IP rate limit: 5 emails / hour
+    // Per-IP rate limit: 20 emails / hour. Tight enough to deter scripts,
+    // loose enough that owners testing the flow don't get locked out.
     const ip = req.ip || "unknown";
-    const rl = checkAndIncrementRateLimit(q, `magic:ip:${ip}`, 5, 3600);
+    const rl = checkAndIncrementRateLimit(q, `magic:ip:${ip}`, 20, 3600);
     if (!rl.allowed) return res.status(429).json({ error: "rate_limited" });
 
     const token = generateToken();
