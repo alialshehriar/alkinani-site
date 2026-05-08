@@ -2,6 +2,7 @@ import { useState } from "react";
 import { logout, type SessionUser, type Quota } from "../../lib/turjuman";
 import NewJob from "./NewJob";
 import JobsList from "./JobsList";
+import AnonymousHero from "./AnonymousHero";
 
 type Props = {
   user: SessionUser | null;
@@ -76,19 +77,12 @@ export default function Dashboard({
         </div>
       </header>
 
-      <section className="mx-auto max-w-3xl space-y-6 px-4 py-8 sm:px-6 sm:py-10">
+      <section className="mx-auto max-w-3xl space-y-8 px-4 py-8 sm:px-6 sm:py-12">
         {!user && (
-          <div className="rounded-xl border border-ink-700/40 bg-ink-900/40 p-5 text-center">
-            <p className="text-xs uppercase tracking-[0.22em] text-ember-400">
-              تجربة مجانية بدون تسجيل
-            </p>
-            <h1 className="mt-2 text-3xl font-medium tracking-tight">
-              ترجم فيديوهاتك بالذكاء الاصطناعي
-            </h1>
-            <p className="mt-2 text-sm text-ink-400">
-              الصق رابط فيديو، اختر اللغة، استلم الفيديو نفسه مع الترجمة محروقة عليه.
-            </p>
-          </div>
+          <AnonymousHero
+            freeRemaining={freeRemaining}
+            freeTotal={freeTotal}
+          />
         )}
 
         <NewJob

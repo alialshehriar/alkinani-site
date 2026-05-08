@@ -105,6 +105,42 @@ export function mp4DownloadUrl(id: string): string {
   return `/api/turjuman/jobs/${id}/mp4`;
 }
 
+/**
+ * Upload a file via XHR so we can stream progress events to the UI.
+ * Returns the created Job.
+ */
+export function uploadFile(
+  file: File,
+  targetLang: string,
+  onProgress: (pct: number) => void
+): Promise<Job> {
+  return new Promise((resolve, reject) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("target_lang", targetLang);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/turjuman/jobs/upload");
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    };
+    xhr.onload = () => {
+      try {
+        const body = JSON.parse(xhr.responseText);
+        if (xhr.status >= 200 && xhr.status < 300) resolve(body.job);
+        else reject(new Error(`${xhr.status}:${xhr.responseText}`));
+      } catch (e) {
+        reject(new Error(`upload_parse:${String(e)}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("upload_network"));
+    xhr.send(fd);
+  });
+}
+
 export function jobErrorMessage(err: unknown): string {
   const msg = err instanceof Error ? err.message : "";
   if (msg.includes("anonymous_quota_exceeded")) return "QUOTA_EXCEEDED";

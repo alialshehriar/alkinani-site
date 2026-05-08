@@ -3,6 +3,7 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { validateUrl, probe, download } from "./yt-dlp.js";
 import { translateVideo } from "./gemini.js";
 import { cuesToSrt } from "./srt.js";
@@ -11,6 +12,29 @@ import { incrementAnonUsed } from "./db.js";
 
 const MAX_DURATION_SEC = 30 * 60;       // strict 30-min ceiling per clip
 const MAX_FILESIZE_MB = 500;
+
+/**
+ * Read duration from a local video file via ffprobe.
+ */
+function ffprobeLocal(filePath) {
+  return new Promise((resolve, reject) => {
+    const p = spawn("ffprobe", [
+      "-v", "error",
+      "-show_entries", "format=duration",
+      "-of", "default=noprint_wrappers=1:nokey=1",
+      filePath,
+    ]);
+    let out = "", err = "";
+    p.stdout.on("data", (b) => (out += b));
+    p.stderr.on("data", (b) => (err += b));
+    p.on("close", (code) => {
+      if (code !== 0) return reject(new Error(`ffprobe failed: ${err.slice(0, 200)}`));
+      const duration = parseFloat(out.trim());
+      if (!Number.isFinite(duration)) return reject(new Error("ffprobe parse failed"));
+      resolve({ duration });
+    });
+  });
+}
 
 let _running = false;
 
@@ -48,26 +72,39 @@ export async function tickWorker({ q, userQ, jobsRoot, geminiApiKey, log }) {
 async function runJob(job, jobsRoot, geminiApiKey, log) {
   const dir = path.join(jobsRoot, job.id);
   await fs.mkdir(dir, { recursive: true });
-  const videoPath = path.join(dir, "source.mp4");
   const srtPath = path.join(dir, "translation.srt");
   const mp4Path = path.join(dir, "translated.mp4");
 
-  // Defense-in-depth — also enforced at API layer.
-  const v = await validateUrl(job.source_url);
-  if (!v.ok) throw new Error(`url_${v.error}`);
+  let videoPath;
+  let durationSec;
 
-  const info = await probe(job.source_url);
-  if (info.duration && info.duration > MAX_DURATION_SEC) {
-    throw new Error(`too_long:${Math.ceil(info.duration / 60)}min>${MAX_DURATION_SEC / 60}min`);
+  if (job.source_url.startsWith("file://")) {
+    // Uploaded file — already on disk. Probe with ffprobe instead of yt-dlp.
+    videoPath = job.source_url.slice(7);
+    const probed = await ffprobeLocal(videoPath);
+    if (probed.duration && probed.duration > MAX_DURATION_SEC) {
+      throw new Error(`too_long:${Math.ceil(probed.duration / 60)}min>${MAX_DURATION_SEC / 60}min`);
+    }
+    durationSec = probed.duration ?? 0;
+  } else {
+    // URL — go through yt-dlp.
+    const v = await validateUrl(job.source_url);
+    if (!v.ok) throw new Error(`url_${v.error}`);
+
+    const info = await probe(job.source_url);
+    if (info.duration && info.duration > MAX_DURATION_SEC) {
+      throw new Error(`too_long:${Math.ceil(info.duration / 60)}min>${MAX_DURATION_SEC / 60}min`);
+    }
+    if (info.filesizeMb && info.filesizeMb > MAX_FILESIZE_MB) {
+      throw new Error(`too_large:${info.filesizeMb}MB>${MAX_FILESIZE_MB}MB`);
+    }
+    durationSec = info.duration ?? 0;
+    videoPath = path.join(dir, "source.mp4");
+    log(`[turjuman] downloading ${job.id} (~${Math.ceil(durationSec / 60)}min)…`);
+    await download(job.source_url, videoPath);
   }
-  if (info.filesizeMb && info.filesizeMb > MAX_FILESIZE_MB) {
-    throw new Error(`too_large:${info.filesizeMb}MB>${MAX_FILESIZE_MB}MB`);
-  }
-  const durationSec = info.duration ?? 0;
+
   const charged = Math.max(1, Math.ceil(durationSec / 60));
-
-  log(`[turjuman] downloading ${job.id} (~${Math.ceil(durationSec / 60)}min)…`);
-  await download(job.source_url, videoPath);
 
   log(`[turjuman] translating ${job.id} via Gemini…`);
   const bytes = await fs.readFile(videoPath);

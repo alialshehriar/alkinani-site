@@ -2,6 +2,9 @@
 
 import express from "express";
 import fs from "node:fs/promises";
+import path from "node:path";
+import { createWriteStream } from "node:fs";
+import Busboy from "busboy";
 import {
   readSessionCookie,
   readAnonCookie,
@@ -18,7 +21,7 @@ import { validateUrl } from "./yt-dlp.js";
 
 const ALLOWED_TARGETS = new Set(["ar", "en", "es"]);
 
-export function jobsRouter({ q, jobsQ, isProduction }) {
+export function jobsRouter({ q, jobsQ, jobsRoot, isProduction }) {
   const router = express.Router();
 
   function authenticate(req, res, next) {
@@ -77,6 +80,86 @@ export function jobsRouter({ q, jobsQ, isProduction }) {
 
     const job = createJob(jobsQ, me.userId, url, target);
     return res.json({ job });
+  });
+
+  // POST /api/turjuman/jobs/upload — multipart upload from device
+  // Body: multipart/form-data { file, target_lang }
+  router.post("/upload", (req, res) => {
+    const me = resolveRequester(req, res);
+    if (me.kind === "anon" && me.quotaRemaining <= 0) {
+      return res.status(402).json({ error: "anonymous_quota_exceeded" });
+    }
+
+    const ct = req.headers["content-type"] ?? "";
+    if (!ct.toLowerCase().startsWith("multipart/form-data")) {
+      return res.status(400).json({ error: "expect_multipart" });
+    }
+
+    const fields = {};
+    let tempPath = null;
+    let savedExt = "mp4";
+    let aborted = false;
+    const MAX_BYTES = 500 * 1024 * 1024; // 500 MB
+    const tempDir = path.join(jobsRoot, "_uploads");
+
+    const bb = Busboy({
+      headers: req.headers,
+      limits: { files: 1, fileSize: MAX_BYTES },
+    });
+
+    bb.on("field", (name, val) => {
+      fields[name] = val;
+    });
+
+    bb.on("file", async (_name, stream, info) => {
+      try {
+        await fs.mkdir(tempDir, { recursive: true });
+      } catch {}
+      const tempName = `${generateUserId()}-${Date.now()}.part`;
+      tempPath = path.join(tempDir, tempName);
+      const ext = (info.filename ?? "upload.mp4").split(".").pop().toLowerCase();
+      if (/^[a-z0-9]{2,5}$/.test(ext)) savedExt = ext;
+      const ws = createWriteStream(tempPath);
+      stream.on("limit", () => {
+        aborted = true;
+        ws.destroy();
+        fs.unlink(tempPath).catch(() => {});
+      });
+      stream.pipe(ws);
+    });
+
+    bb.on("close", async () => {
+      if (aborted) return res.status(413).json({ error: "file_too_large" });
+      if (!tempPath) return res.status(400).json({ error: "no_file" });
+
+      const target = (fields.target_lang ?? "ar").trim();
+      if (!ALLOWED_TARGETS.has(target)) {
+        await fs.unlink(tempPath).catch(() => {});
+        return res.status(400).json({ error: "invalid_target_lang" });
+      }
+
+      // Create job first, then move temp file into the job's dir under a
+      // deterministic name. Pipeline reads file:// path directly.
+      const sourceRefPlaceholder = "upload://"; // overwritten below
+      const job = createJob(jobsQ, me.userId, sourceRefPlaceholder, target);
+      const jobDir = path.join(jobsRoot, job.id);
+      await fs.mkdir(jobDir, { recursive: true });
+      const finalPath = path.join(jobDir, `source.${savedExt}`);
+      await fs.rename(tempPath, finalPath);
+
+      const finalRef = `file://${finalPath}`;
+      jobsQ.updateJobSource.run(finalRef, job.id);
+      const refreshed = jobsQ.findJob.get(job.id);
+
+      return res.json({ job: refreshed });
+    });
+
+    bb.on("error", (err) => {
+      console.error("[turjuman] upload busboy error:", err);
+      if (!res.headersSent) res.status(500).json({ error: "upload_failed" });
+    });
+
+    req.pipe(bb);
   });
 
   // Resolver that doesn't 402 — returns whichever ID is in play (real or anon)

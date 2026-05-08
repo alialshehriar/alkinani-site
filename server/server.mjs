@@ -666,6 +666,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 app.use("/api/turjuman/jobs", turjumanJobsRouter({
   q: turjumanQueries,
   jobsQ: turjumanJobsQueries,
+  jobsRoot: TURJUMAN_JOBS_ROOT,
   isProduction: process.env.NODE_ENV === "production",
 }));
 

@@ -56,6 +56,9 @@ export function makeJobsQueries(db) {
         error_message = ?, completed_at = ?
       WHERE id = ?
     `),
+    updateJobSource: db.prepare(`
+      UPDATE turjuman_jobs SET source_url = ? WHERE id = ?
+    `),
     // Charge credits — free first, then paid.
     chargeCredits: db.prepare(`
       UPDATE turjuman_users
