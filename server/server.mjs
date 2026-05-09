@@ -33,6 +33,7 @@ import { turjumanRouter } from "./turjuman/routes.js";
 import { ensureJobsSchema as ensureTurjumanJobsSchema, makeJobsQueries as makeTurjumanJobsQueries } from "./turjuman/jobs-db.js";
 import { jobsRouter as turjumanJobsRouter } from "./turjuman/jobs-routes.js";
 import { tickWorker as tickTurjumanWorker } from "./turjuman/pipeline.js";
+import { paymentsRouter as turjumanPaymentsRouter } from "./turjuman/payments-routes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || "3002", 10);
@@ -73,7 +74,12 @@ app.disable("x-powered-by");
 // without trusting headers from arbitrary clients (per pentest finding —
 // `cf-connecting-ip` / `x-real-ip` were spoofable end-to-end).
 app.set("trust proxy", "loopback");
-app.use(express.json({ limit: "256kb" }));
+// Capture the raw body alongside the parsed JSON so the Lemon Squeezy
+// webhook can verify HMAC over the exact bytes it signed.
+app.use(express.json({
+  limit: "1mb",
+  verify: (req, _res, buf) => { req.rawBody = buf; },
+}));
 
 // CORS — only our origins. Pentest F6 found `*` allowed any third-party
 // site to burn AI/TTS budget via the visitor's session.
@@ -670,6 +676,12 @@ app.use("/api/turjuman/jobs", turjumanJobsRouter({
   isProduction: process.env.NODE_ENV === "production",
 }));
 
+app.use("/api/turjuman/payments", turjumanPaymentsRouter({
+  db,
+  q: turjumanQueries,
+  baseUrl: TURJUMAN_BASE_URL,
+}));
+
 // Worker tick every 5s — Plan B Phase 1 is single-in-flight.
 setInterval(() => {
   if (!GEMINI_API_KEY) return; // skip if not configured
@@ -1207,11 +1219,78 @@ app.use(express.static(STATIC_DIR, {
   },
 }));
 
+// Per-route meta for social unfurls (Twitter/WhatsApp/Slack). The SPA
+// shares one index.html, so without this, a /tools/turjuman link card
+// shows the homepage's "Ali Alkinani" title — useless.
+const ROUTE_META = {
+  "/tools/turjuman": {
+    title: "ترجمان · ترجمة الفيديو بالذكاء الاصطناعي",
+    description: "ارفع رابط أو فيديو، استلم ملف مترجم بالعربية ومحروق فيه بثوانٍ. ٥ دقائق مجانية بدون تسجيل.",
+    image: "https://alkinani.live/og-turjuman.png",
+  },
+  "/tools": {
+    title: "أدوات علي الكناني · Tools",
+    description: "أدوات ذكاء اصطناعي مفتوحة الاستخدام: ترجمان لترجمة الفيديو · رادار للذكاء الاصطناعي.",
+    image: "https://alkinani.live/og-turjuman.png",
+  },
+};
+
+function escapeAttr(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+function injectMeta(html, meta) {
+  // Strip existing OG/Twitter/<title> so we don't ship duplicates that
+  // confuse crawlers (they typically pick the first match).
+  const stripped = html
+    .replace(/\s*<meta\s+property="og:[^"]+"[^>]*\/?>/gi, "")
+    .replace(/\s*<meta\s+name="twitter:[^"]+"[^>]*\/?>/gi, "")
+    .replace(/\s*<meta\s+name="description"[^>]*\/?>/gi, "")
+    .replace(/<title>[^<]*<\/title>/i, "");
+
+  const tags = [
+    `<meta name="description" content="${escapeAttr(meta.description)}" />`,
+    `<meta property="og:type" content="website" />`,
+    `<meta property="og:url" content="${escapeAttr(meta.url)}" />`,
+    `<meta property="og:title" content="${escapeAttr(meta.title)}" />`,
+    `<meta property="og:description" content="${escapeAttr(meta.description)}" />`,
+    `<meta property="og:image" content="${escapeAttr(meta.image)}" />`,
+    `<meta property="og:image:width" content="1200" />`,
+    `<meta property="og:image:height" content="630" />`,
+    `<meta name="twitter:card" content="summary_large_image" />`,
+    `<meta name="twitter:title" content="${escapeAttr(meta.title)}" />`,
+    `<meta name="twitter:description" content="${escapeAttr(meta.description)}" />`,
+    `<meta name="twitter:image" content="${escapeAttr(meta.image)}" />`,
+    `<title>${escapeAttr(meta.title)}</title>`,
+  ].join("\n    ");
+
+  return stripped.replace(/<\/head>/i, `    ${tags}\n  </head>`);
+}
+
 // SPA fallback — anything that's not /api and not a real file → index.html
-app.get(/^(?!\/api\/).*/, (_req, res, next) => {
+app.get(/^(?!\/api\/).*/, (req, res, next) => {
   const indexFile = path.join(STATIC_DIR, "index.html");
   fs.access(indexFile, fs.constants.R_OK, (err) => {
     if (err) return next();
+
+    // Match longest-prefix so /tools/turjuman wins over /tools.
+    const pathname = req.path.replace(/\/+$/, "") || "/";
+    const matchKey = pathname.startsWith("/tools/turjuman") ? "/tools/turjuman"
+                  : pathname === "/tools" ? "/tools"
+                  : null;
+    const meta = matchKey ? ROUTE_META[matchKey] : null;
+
+    if (meta) {
+      try {
+        const html = fs.readFileSync(indexFile, "utf8");
+        const out = injectMeta(html, { ...meta, url: `https://alkinani.live${matchKey}` });
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache");
+        return res.send(out);
+      } catch {
+        // Fall through to plain sendFile
+      }
+    }
     res.sendFile(indexFile);
   });
 });
