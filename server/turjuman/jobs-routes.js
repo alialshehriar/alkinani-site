@@ -18,8 +18,9 @@ import {
 } from "./db.js";
 import { createJob } from "./jobs-db.js";
 import { validateUrl } from "./yt-dlp.js";
+import { subscribeToJob } from "./job-events.js";
 
-const ALLOWED_TARGETS = new Set(["ar", "en", "es"]);
+const ALLOWED_TARGETS = new Set(["ar", "en", "es", "zh"]);
 
 export function jobsRouter({ q, jobsQ, jobsRoot, isProduction }) {
   const router = express.Router();
@@ -187,6 +188,58 @@ export function jobsRouter({ q, jobsQ, jobsRoot, isProduction }) {
       return res.status(404).json({ error: "not_found" });
     }
     return res.json({ job });
+  });
+
+  // GET /api/turjuman/jobs/:id/stream — SSE channel for live progress.
+  //
+  // The pipeline emits events like {stage:"downloading",pct:15} so the UI
+  // can replace its 3s polling with real-time updates. The connection
+  // closes itself once a terminal "done"/"error" event is received.
+  router.get("/:id/stream", (req, res) => {
+    const userId = whoami(req);
+    const job = jobsQ.findJob.get(req.params.id);
+    if (!job || job.user_id !== userId) {
+      return res.status(404).end();
+    }
+
+    res.set({
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no", // Nginx: defeat default response buffering
+    });
+    res.flushHeaders?.();
+    res.write(`retry: 3000\n\n`);
+
+    // Replay last-known status from the DB so a freshly-opened tab gets
+    // immediate context even if the pipeline hasn't fired an event yet.
+    if (job.status === "done" || job.status === "error") {
+      res.write(
+        `event: ${job.status === "done" ? "done" : "error"}\n` +
+        `data: ${JSON.stringify({ stage: job.status, pct: 100 })}\n\n`
+      );
+      res.end();
+      return;
+    }
+
+    const send = (evt) => {
+      const eventName = evt.stage === "done" || evt.stage === "error"
+        ? evt.stage : "progress";
+      res.write(`event: ${eventName}\ndata: ${JSON.stringify(evt)}\n\n`);
+      if (evt.stage === "done" || evt.stage === "error") {
+        res.end();
+      }
+    };
+
+    const unsub = subscribeToJob(job.id, send);
+
+    // Heartbeat every 20s so middlemen (nginx, CF) don't kill idle conns.
+    const hb = setInterval(() => res.write(`: ping\n\n`), 20_000);
+
+    req.on("close", () => {
+      clearInterval(hb);
+      unsub();
+    });
   });
 
   router.get("/:id/srt", async (req, res) => {

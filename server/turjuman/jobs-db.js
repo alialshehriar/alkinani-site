@@ -41,6 +41,11 @@ export function makeJobsQueries(db) {
       SELECT * FROM turjuman_jobs WHERE status = 'queued'
       ORDER BY created_at ASC LIMIT 1
     `),
+    requeueInterruptedJobs: db.prepare(`
+      UPDATE turjuman_jobs
+      SET status = 'queued', started_at = NULL, error_message = NULL
+      WHERE status = 'processing' AND completed_at IS NULL
+    `),
     setJobStarted: db.prepare(`
       UPDATE turjuman_jobs SET status = 'processing', started_at = ?
       WHERE id = ? AND status = 'queued'

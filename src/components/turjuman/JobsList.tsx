@@ -46,7 +46,7 @@ export default function JobsList({ refreshNonce }: Props) {
   return (
     <div className="space-y-2">
       {jobs.map((j) => (
-        <JobRow key={j.id} job={j} />
+        <JobRow key={j.id} job={j} onTerminal={refresh} />
       ))}
     </div>
   );

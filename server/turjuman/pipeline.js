@@ -5,14 +5,24 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { validateUrl, probe, download } from "./yt-dlp.js";
-import { translateVideo } from "./gemini.js";
+import { translateMedia, translateChunked } from "./gemini.js";
 import { cuesToSrt } from "./srt.js";
-import { burnSubtitles } from "./ffmpeg.js";
+import { burnSubtitles, extractAudio, chunkAudio } from "./ffmpeg.js";
 import { incrementAnonUsed } from "./db.js";
 import { emitJobEvent } from "./job-events.js";
 
 const MAX_DURATION_SEC = 30 * 60;       // strict 30-min ceiling per clip
 const MAX_FILESIZE_MB = 500;
+
+function readPositiveNumberEnv(name, fallback, { min = 1, max = Infinity } = {}) {
+  const raw = Number(process.env[name]);
+  if (!Number.isFinite(raw) || raw <= 0) return fallback;
+  return Math.max(min, Math.min(max, raw));
+}
+
+function defaultChunkConcurrency(durationSec) {
+  return durationSec >= 10 * 60 ? 3 : 2;
+}
 
 /**
  * Read duration from a local video file via ffprobe.
@@ -43,6 +53,11 @@ export async function tickWorker({ q, userQ, jobsRoot, geminiApiKey, log }) {
   if (_running) return;
   _running = true;
   try {
+    const recovered = q.requeueInterruptedJobs?.run();
+    if (recovered?.changes) {
+      log(`[turjuman] recovered ${recovered.changes} interrupted processing job(s)`);
+    }
+
     const job = q.nextQueuedJob.get();
     if (!job) return;
 
@@ -120,7 +135,9 @@ async function runJob(job, jobsRoot, geminiApiKey, log) {
     videoPath = path.join(dir, "source.mp4");
     log(`[turjuman] downloading ${job.id}${probeDuration ? ` (~${Math.ceil(probeDuration / 60)}min)` : ""}…`);
     emitJobEvent(job.id, { stage: "downloading", pct: 15, durationSec: probeDuration });
+    const tDl = Date.now();
     const dlResult = await download(job.source_url, videoPath);
+    log(`[turjuman] download took ${((Date.now() - tDl) / 1000).toFixed(1)}s${dlResult?.source ? ` (via ${dlResult.source})` : ""}`);
     if (dlResult?.source === "cobalt") {
       log(`[turjuman] ${job.id} downloaded via Cobalt fallback`);
     }
@@ -135,26 +152,113 @@ async function runJob(job, jobsRoot, geminiApiKey, log) {
 
   const charged = Math.max(1, Math.ceil(durationSec / 60));
 
+  // Extract speech-optimized audio first. Gemini can subtitle from audio
+  // alone, and a mono 64kbps track is far smaller than the source video,
+  // which cuts upload time without paying a subtitle-quality penalty.
+  const tAudio = Date.now();
+  log(`[turjuman] extracting audio for ${job.id}…`);
+  emitJobEvent(job.id, { stage: "translating", pct: 35, durationSec, charged });
+  let audio;
+  try {
+    audio = await extractAudio(videoPath);
+    log(`[turjuman] audio extract took ${((Date.now() - tAudio) / 1000).toFixed(1)}s`);
+  } catch (e) {
+    log(`[turjuman] audio extract failed (${String(e?.message || e).slice(0, 80)}) — falling back to full video`);
+    audio = null;
+  }
+
   log(`[turjuman] translating ${job.id} via Gemini…`);
   emitJobEvent(job.id, { stage: "translating", pct: 40, durationSec, charged });
-  const bytes = await fs.readFile(videoPath);
-  const cues = await translateVideo({
-    apiKey: geminiApiKey,
-    videoBytes: bytes,
-    mimeType: "video/mp4",
-    targetLang: job.target_lang,
-  });
+  const tGen = Date.now();
+
+  // For long clips, split the audio into 60-second chunks and translate
+  // them in parallel. A single Gemini call drifts in timestamp estimation
+  // over 5+ minute audio (cues "wander" off the speech by 10-30 seconds);
+  // chunking gives every cue a fresh ≤60s window so the timing stays tight.
+  // Threshold is conservative — short clips (<2 min) still run in one shot
+  // because the chunking overhead would outweigh the timing benefit.
+  const CHUNK_THRESHOLD_SEC = readPositiveNumberEnv("GEMINI_CHUNK_THRESHOLD_SEC", 120, { min: 30, max: 600 });
+  const CHUNK_LEN_SEC = readPositiveNumberEnv("GEMINI_CHUNK_SECONDS", 60, { min: 30, max: 120 });
+  let cues;
+  try {
+    if (audio?.path && durationSec > CHUNK_THRESHOLD_SEC) {
+      log(`[turjuman] long clip (${Math.ceil(durationSec / 60)}min) — chunking audio @ ${CHUNK_LEN_SEC}s`);
+      const chunks = await chunkAudio(audio.path, CHUNK_LEN_SEC);
+      const measuredDuration = chunks.reduce((sum, ch) => sum + (ch.durationSec || 0), 0);
+      const chunkConcurrency = readPositiveNumberEnv(
+        "GEMINI_CHUNK_CONCURRENCY",
+        defaultChunkConcurrency(durationSec),
+        { min: 1, max: 4 }
+      );
+      log(
+        `[turjuman] produced ${chunks.length} chunks` +
+        `${measuredDuration ? ` (${measuredDuration.toFixed(1)}s measured)` : ""}` +
+        ` @ concurrency ${chunkConcurrency}`
+      );
+      try {
+        cues = await translateChunked({
+          apiKey: geminiApiKey,
+          chunks,
+          mimeType: audio.mimeType,
+          targetLang: job.target_lang,
+          log,
+          concurrency: chunkConcurrency,
+          onProgress: ({ completed, total }) => {
+            const pct = Math.min(70, 40 + Math.round((completed / total) * 30));
+            emitJobEvent(job.id, { stage: "translating", pct, durationSec, charged });
+          },
+        });
+      } finally {
+        // Clean up chunk files even when Gemini fails.
+        for (const ch of chunks) await fs.unlink(ch.path).catch(() => {});
+      }
+    } else {
+      cues = await translateMedia({
+        apiKey: geminiApiKey,
+        mediaPath: audio?.path ?? videoPath,
+        mimeType: audio?.mimeType ?? "video/mp4",
+        targetLang: job.target_lang,
+        log,
+      });
+    }
+  } finally {
+    // Audio file is no longer needed once cues are back, and should not
+    // linger when Gemini throws.
+    if (audio?.path) await fs.unlink(audio.path).catch(() => {});
+  }
+  log(`[turjuman] translate (gemini total) took ${((Date.now() - tGen) / 1000).toFixed(1)}s · ${cues.length} cues`);
+  logCueQuality(cues, durationSec, log);
 
   const srt = cuesToSrt(cues);
   await fs.writeFile(srtPath, srt, "utf8");
   emitJobEvent(job.id, { stage: "burning", pct: 75 });
 
   log(`[turjuman] burning subtitles into video for ${job.id}…`);
+  const tBurn = Date.now();
   await burnSubtitles({ videoPath, srtPath, outPath: mp4Path, targetLang: job.target_lang });
+  log(`[turjuman] burn took ${((Date.now() - tBurn) / 1000).toFixed(1)}s`);
   emitJobEvent(job.id, { stage: "finalizing", pct: 95 });
 
   // Source no longer needed — only keep the burned MP4 + SRT.
   await fs.unlink(videoPath).catch(() => {});
 
   return { srtPath, mp4Path, durationSec, charged };
+}
+
+function logCueQuality(cues, durationSec, log) {
+  if (!Number.isFinite(durationSec) || durationSec <= 0 || !Array.isArray(cues)) return;
+  const cueSeconds = cues.reduce((sum, c) => sum + Math.max(0, Math.min(7, c.end - c.start)), 0);
+  const cuesPerMin = cues.length / Math.max(1, durationSec / 60);
+  const coveragePct = Math.round((cueSeconds / durationSec) * 100);
+  const lastEnd = cues.reduce((max, c) => Math.max(max, c.end), 0);
+  log(
+    `[turjuman] cue quality: ${cues.length} cues · ${cuesPerMin.toFixed(1)} cues/min` +
+    ` · ${coveragePct}% subtitle coverage · last cue @ ${lastEnd.toFixed(1)}s`
+  );
+  if (durationSec >= 120 && cues.length < Math.max(5, durationSec / 30)) {
+    log(`[turjuman] cue quality warning: unusually sparse subtitles for ${Math.round(durationSec)}s media`);
+  }
+  if (lastEnd > durationSec + 10) {
+    log(`[turjuman] cue quality warning: cues extend beyond media duration by ${(lastEnd - durationSec).toFixed(1)}s`);
+  }
 }

@@ -9,22 +9,22 @@ test("formatTimestamp rounds to milliseconds", () => {
 });
 
 test("cuesToSrt produces standard SRT with normalized timings", () => {
-  // 300ms lead-in pushes cue 2 start back, which can clip cue 1's end.
+  // 150ms lead-in pushes cue starts back slightly without making them feel early.
   // Cues are well-spaced enough that order + content survive.
   const cues = [
     { start: 1.0, end: 3.0, text: "hello" },
     { start: 4.0, end: 6.0, text: "world" },
   ];
   const srt = cuesToSrt(cues);
-  assert.match(srt, /^1\n00:00:00,700 --> 00:00:03,000\nhello\n\n2\n/);
-  assert.match(srt, /^.+\n.+\n.+\n\n2\n00:00:03,700 --> 00:00:06,000\nworld\n/m);
+  assert.match(srt, /^1\n00:00:00,850 --> 00:00:03,000\nhello\n\n2\n/);
+  assert.match(srt, /^.+\n.+\n.+\n\n2\n00:00:03,850 --> 00:00:06,000\nworld\n/m);
 });
 
 test("normalizeCues enforces min 1.2s duration", async () => {
   const { normalizeCues } = await import("../srt.js");
   const out = normalizeCues([{ start: 5, end: 5.5, text: "ok" }]);
-  assert.equal(out[0].start, 4.7); // 300ms lead-in
-  assert.equal(out[0].end, 5.9);   // 4.7 + 1.2 min duration
+  assert.equal(out[0].start, 4.85); // 150ms lead-in
+  assert.equal(out[0].end, 6.05);   // 4.85 + 1.2 min duration
 });
 
 test("normalizeCues prevents overlap between cues", async () => {
@@ -49,6 +49,12 @@ test("splitLongLine breaks at 22 arabic chars", () => {
   const lines = splitLongLine(s, 22);
   assert.ok(lines.length >= 2);
   for (const l of lines) assert.ok(l.length <= 22, `line too long: ${l.length}`);
+});
+
+test("cuesToSrt breaks Chinese lines tightly", () => {
+  const s = "这是一个很长的中文字幕示例需要在屏幕上保持清晰";
+  const srt = cuesToSrt([{ start: 0, end: 5, text: s }]);
+  assert.match(srt, /这是一个很长的中文字幕示例需要在屏幕\n上保持清晰/);
 });
 
 test("cuesToSrt enforces max 2 lines per cue", () => {

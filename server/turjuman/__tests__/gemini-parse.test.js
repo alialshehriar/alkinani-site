@@ -13,6 +13,17 @@ test("parseCues strips markdown fence", () => {
   assert.equal(cues[0].text, "x");
 });
 
+test("parseCues accepts wrapped cue arrays", () => {
+  const cues = parseCues('{"cues":[{"start":0,"end":1,"text":"x"}]}');
+  assert.equal(cues[0].text, "x");
+});
+
+test("parseCues coerces timestamp strings", () => {
+  const cues = parseCues('[{"start":"00:01.500","end":"00:03.000","text":"x"}]');
+  assert.equal(cues[0].start, 1.5);
+  assert.equal(cues[0].end, 3);
+});
+
 test("parseCues rejects malformed entries", () => {
   const cues = parseCues('[{"start":0,"end":1,"text":"ok"},{"text":"missing times"}]');
   assert.equal(cues.length, 1);

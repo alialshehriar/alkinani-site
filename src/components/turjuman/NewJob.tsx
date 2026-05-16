@@ -12,6 +12,7 @@ const TARGETS = [
   { value: "ar", label: "عربي" },
   { value: "en", label: "English" },
   { value: "es", label: "Español" },
+  { value: "zh", label: "中文" },
 ];
 
 const MAX_UPLOAD_MB = 500;
@@ -132,19 +133,37 @@ export default function NewJob({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="rounded-xl border border-ink-700/60 bg-ink-950 px-4 py-3 text-sm text-ink-200 transition hover:border-ember-400 hover:text-ember-400"
+              className="flex-1 sm:flex-initial rounded-xl border border-ink-700/60 bg-ink-950 px-4 py-3 text-sm text-ink-200 transition hover:border-ember-400 hover:text-ember-400 active:bg-ember-400/10"
             >
-              ⬆ ارفع ملف
+              ⬆ ارفع ملف من جهازك
             </button>
           </div>
+          {/*
+            `capture="environment"` was forcing the rear camera on mobile —
+            users couldn't pick an existing video from their gallery or
+            Files app. Dropping it lets iOS show "Photo Library / Take
+            Photo or Video / Choose File" as expected, and Android shows
+            the gallery + Files picker.
+          */}
           <input
             ref={fileInputRef}
             type="file"
-            accept="video/*"
+            accept="video/mp4,video/quicktime,video/webm,video/x-m4v,video/*"
             className="hidden"
             onChange={handleFileChange}
           />
         </div>
+
+        {/* Mobile-only hint: drag-drop doesn't fire on iOS Safari, so make the
+            upload tap target explicit. */}
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-ink-700/60 bg-ink-950/40 py-3 text-xs text-ink-400 transition hover:border-ember-400/60 hover:text-ember-400 sm:hidden"
+        >
+          <span>📱</span>
+          <span>اضغط هنا لرفع فيديو من معرض الجوال</span>
+        </button>
 
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <label className="text-sm text-ink-300">لغة الترجمة:</label>

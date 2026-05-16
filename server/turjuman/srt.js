@@ -1,6 +1,12 @@
 // SRT formatter: cue → SubRip text, with Netflix/BBC line-break rules.
 
 const ARABIC_RX = /[؀-ۿ]/;
+const CJK_RX = /[\u3400-\u9FFF\uF900-\uFAFF]/;
+const LEAD_IN_SEC = 0.15;
+const MIN_DURATION_SEC = 1.2;
+const MIN_TIGHT_DURATION_SEC = 0.6;
+const MAX_DURATION_SEC = 7;
+const MIN_GAP_SEC = 0.08;
 
 function pad(n, w) { return String(n).padStart(w, "0"); }
 
@@ -14,6 +20,7 @@ export function formatTimestamp(seconds) {
 }
 
 function isArabic(text) { return ARABIC_RX.test(text); }
+function isCjk(text) { return CJK_RX.test(text); }
 
 /**
  * Greedy line-break: words are appended until adding one more would exceed
@@ -50,7 +57,7 @@ export function splitLongLine(text, maxChars) {
  * into the second line (truncation accepted in MVP).
  */
 function layoutCueText(text) {
-  const maxChars = isArabic(text) ? 22 : 42;
+  const maxChars = isArabic(text) ? 22 : isCjk(text) ? 18 : 42;
   const lines = splitLongLine(text, maxChars);
   if (lines.length <= 2) return lines.join("\n");
   return [lines[0], lines.slice(1).join(" ")].join("\n");
@@ -59,7 +66,7 @@ function layoutCueText(text) {
 /**
  * Smooth out raw model timings into a more readable subtitle track:
  *   - sort by start time (defensive)
- *   - 300ms lead-in (subtitle appears slightly before speech starts)
+ *   - 150ms lead-in (subtitle appears just before speech starts)
  *   - min on-screen duration 1.2s (eye needs time to land on the line)
  *   - max on-screen duration 7s (don't let a cue linger forever)
  *   - min 80ms gap between adjacent cues (no flicker / no overlap)
@@ -71,7 +78,7 @@ export function normalizeCues(rawCues) {
     .filter((c) => typeof c.start === "number" && typeof c.end === "number")
     .sort((a, b) => a.start - b.start)
     .map((c) => ({
-      start: Math.max(0, c.start - 0.3),
+      start: Math.max(0, c.start - LEAD_IN_SEC),
       end: c.end,
       text: String(c.text).trim(),
     }))
@@ -79,17 +86,21 @@ export function normalizeCues(rawCues) {
 
   for (let i = 0; i < cues.length; i++) {
     const c = cues[i];
-    if (c.end - c.start < 1.2) c.end = c.start + 1.2;
-    if (c.end - c.start > 7) c.end = c.start + 7;
+    if (c.end - c.start < MIN_DURATION_SEC) c.end = c.start + MIN_DURATION_SEC;
+    if (c.end - c.start > MAX_DURATION_SEC) c.end = c.start + MAX_DURATION_SEC;
 
     const next = cues[i + 1];
     if (next) {
-      // If we now overlap, push next start forward, OR clip our end.
-      if (c.end + 0.08 > next.start) {
-        if (c.end < next.start) {
-          // Already a tight gap — nothing to do.
+      // Prefer clipping the current cue to preserve the next cue's speech
+      // onset. If the cues are extremely tight, allow a shorter display
+      // duration rather than producing overlapping subtitles.
+      if (c.end + MIN_GAP_SEC > next.start) {
+        const clippedEnd = next.start - MIN_GAP_SEC;
+        if (clippedEnd > c.start) {
+          c.end = Math.max(c.start + MIN_TIGHT_DURATION_SEC, clippedEnd);
+          if (c.end + MIN_GAP_SEC > next.start) c.end = clippedEnd;
         } else {
-          c.end = Math.max(c.start + 1.2, next.start - 0.08);
+          next.start = c.end + MIN_GAP_SEC;
         }
       }
     }
