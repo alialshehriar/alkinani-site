@@ -32,3 +32,12 @@ dist-ssr
 
 # Local deploy bundle (contains creds)
 .deploy/
+
+# SQLite runtime DBs (server-only, never committed)
+*.db
+*.db-shm
+*.db-wal
+
+# Turjuman job artifacts (per-job temp video/audio/srt output)
+server/turjuman-jobs/
+turjuman-jobs/
