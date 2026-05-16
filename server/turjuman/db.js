@@ -16,6 +16,40 @@ export function ensureSchema(db) {
       last_active_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_tj_users_email ON turjuman_users(email);
+  `);
+
+  // Additive-only migrations for OAuth + phone identity. ALTER TABLE ADD
+  // COLUMN throws if the column already exists, so we swallow the error per
+  // column rather than guarding with a SELECT (cheaper at boot).
+  for (const sql of [
+    "ALTER TABLE turjuman_users ADD COLUMN google_id TEXT",
+    "ALTER TABLE turjuman_users ADD COLUMN apple_id TEXT",
+    "ALTER TABLE turjuman_users ADD COLUMN phone TEXT",
+    "ALTER TABLE turjuman_users ADD COLUMN phone_verified_at INTEGER",
+    "ALTER TABLE turjuman_users ADD COLUMN display_name TEXT",
+    "ALTER TABLE turjuman_users ADD COLUMN avatar_url TEXT",
+  ]) {
+    try { db.exec(sql); } catch { /* column exists */ }
+  }
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tj_users_google ON turjuman_users(google_id) WHERE google_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tj_users_apple  ON turjuman_users(apple_id)  WHERE apple_id  IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tj_users_phone  ON turjuman_users(phone)     WHERE phone     IS NOT NULL;
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS turjuman_phone_otps (
+      phone TEXT PRIMARY KEY,
+      code_hash TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      consumed_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_tj_otp_expires ON turjuman_phone_otps(expires_at);
+  `);
+
+  db.exec(`
 
     CREATE TABLE IF NOT EXISTS turjuman_magic_tokens (
       token TEXT PRIMARY KEY,
@@ -75,11 +109,46 @@ export function makeQueries(db) {
       "SELECT * FROM turjuman_users WHERE email = ?"
     ),
     findUserById: db.prepare("SELECT * FROM turjuman_users WHERE id = ?"),
+    findUserByGoogleId: db.prepare(
+      "SELECT * FROM turjuman_users WHERE google_id = ?"
+    ),
+    findUserByAppleId: db.prepare(
+      "SELECT * FROM turjuman_users WHERE apple_id = ?"
+    ),
+    findUserByPhone: db.prepare(
+      "SELECT * FROM turjuman_users WHERE phone = ?"
+    ),
+    setUserGoogleId: db.prepare(
+      "UPDATE turjuman_users SET google_id = ?, display_name = COALESCE(?, display_name), avatar_url = COALESCE(?, avatar_url) WHERE id = ?"
+    ),
+    setUserAppleId: db.prepare(
+      "UPDATE turjuman_users SET apple_id = ?, display_name = COALESCE(?, display_name) WHERE id = ?"
+    ),
+    setUserPhone: db.prepare(
+      "UPDATE turjuman_users SET phone = ?, phone_verified_at = ? WHERE id = ?"
+    ),
     insertUser: db.prepare(
       `INSERT INTO turjuman_users
        (id, email, credits_balance, free_credits_remaining,
         free_credits_reset_at, created_at, last_active_at)
        VALUES (?, ?, 0, 10, ?, ?, ?)`
+    ),
+    insertPhoneOtp: db.prepare(
+      `INSERT OR REPLACE INTO turjuman_phone_otps
+       (phone, code_hash, attempts, expires_at, created_at, consumed_at)
+       VALUES (?, ?, 0, ?, ?, NULL)`
+    ),
+    findPhoneOtp: db.prepare(
+      "SELECT * FROM turjuman_phone_otps WHERE phone = ?"
+    ),
+    bumpPhoneOtpAttempts: db.prepare(
+      "UPDATE turjuman_phone_otps SET attempts = attempts + 1 WHERE phone = ?"
+    ),
+    consumePhoneOtp: db.prepare(
+      "UPDATE turjuman_phone_otps SET consumed_at = ? WHERE phone = ? AND consumed_at IS NULL"
+    ),
+    prunePhoneOtps: db.prepare(
+      "DELETE FROM turjuman_phone_otps WHERE expires_at < ?"
     ),
     touchUser: db.prepare(
       "UPDATE turjuman_users SET last_active_at = ? WHERE id = ?"
@@ -134,7 +203,92 @@ export function makeQueries(db) {
     incrementAnonQuota: db.prepare(
       "UPDATE turjuman_anonymous_quotas SET minutes_used = minutes_used + ? WHERE anon_id = ?"
     ),
+
+    // ── Paid credit ledger (Lemon Squeezy webhook target) ─────────────
+    // Idempotent insert: if we've already booked this lemon_order_id, the
+    // UNIQUE index on lemon_order_id makes this a no-op.
+    insertCreditsLog: db.prepare(
+      `INSERT OR IGNORE INTO turjuman_credits_log
+         (user_id, delta, reason, expires_at, lemon_order_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ),
+    findCreditsByLemonOrder: db.prepare(
+      "SELECT * FROM turjuman_credits_log WHERE lemon_order_id = ?"
+    ),
+    addUserCredits: db.prepare(
+      "UPDATE turjuman_users SET credits_balance = credits_balance + ? WHERE id = ?"
+    ),
+    markCreditsRefunded: db.prepare(
+      `UPDATE turjuman_credits_log
+         SET refunded_at = ?, refund_amount_sar = ?
+       WHERE lemon_order_id = ? AND refunded_at IS NULL`
+    ),
+    sumActiveCredits: db.prepare(
+      `SELECT COALESCE(SUM(delta), 0) AS total
+         FROM turjuman_credits_log
+        WHERE user_id = ?
+          AND refunded_at IS NULL
+          AND (expires_at IS NULL OR expires_at > ?)`
+    ),
   };
+}
+
+/**
+ * Atomically grant credits to a user from a Lemon order. Returns true if
+ * this insert was the first time we saw this lemon_order_id (i.e. the
+ * caller should consider the order applied), false if a duplicate webhook
+ * was being replayed.
+ *
+ * Wraps both rows in a transaction so a crash between them can't leave
+ * the user under-credited.
+ */
+export function grantCreditsFromLemonOrder(db, q, {
+  userId, minutes, lemonOrderId, expiresAt, reason,
+}) {
+  const tx = db.transaction(() => {
+    const info = q.insertCreditsLog.run(
+      userId,
+      minutes,
+      reason || "lemon_order_paid",
+      expiresAt ?? null,
+      lemonOrderId,
+      Date.now()
+    );
+    if (info.changes !== 1) {
+      // Already booked — replay; do NOT bump balance again.
+      return false;
+    }
+    q.addUserCredits.run(minutes, userId);
+    return true;
+  });
+  return tx();
+}
+
+/**
+ * Reverse a previously-granted Lemon order. Idempotent: if we never saw the
+ * order, or it's already marked refunded, returns false.
+ */
+export function reverseCreditsFromLemonOrder(db, q, {
+  lemonOrderId, refundAmountSar,
+}) {
+  const tx = db.transaction(() => {
+    const row = q.findCreditsByLemonOrder.get(lemonOrderId);
+    if (!row) return false;
+    if (row.refunded_at) return false;
+    const updated = q.markCreditsRefunded.run(
+      Date.now(), refundAmountSar ?? null, lemonOrderId
+    );
+    if (updated.changes !== 1) return false;
+    // Reverse only what's still on the balance — never let it go negative
+    // (user may have already spent the credits).
+    q.addUserCredits.run(-row.delta, row.user_id);
+    // Clamp to 0 in case the spend left them below 0 after reversal.
+    db.prepare(
+      "UPDATE turjuman_users SET credits_balance = MAX(0, credits_balance) WHERE id = ?"
+    ).run(row.user_id);
+    return true;
+  });
+  return tx();
 }
 
 export function getOrCreateAnonQuota(q, anonId, ip) {
@@ -292,4 +446,92 @@ export function prune(q) {
   const now = Date.now();
   q.pruneMagicTokens.run(now);
   q.pruneSessions.run(now, now);
+  q.prunePhoneOtps.run(now);
+}
+
+// ── OAuth + phone helpers ────────────────────────────────────────────────────
+
+/**
+ * Find or create a user by Google sub. If a user already exists with the
+ * same email but no google_id, we link them. Returns the user row.
+ */
+export function findOrCreateUserByGoogle(q, { sub, email, name, picture }) {
+  if (!sub) throw new Error("google sub required");
+  const lcEmail = (email || "").toLowerCase();
+  let user = q.findUserByGoogleId.get(sub);
+  if (user) {
+    q.setUserGoogleId.run(sub, name || null, picture || null, user.id);
+    touchUser(q, user.id);
+    return q.findUserById.get(user.id);
+  }
+  if (lcEmail) {
+    user = q.findUserByEmail.get(lcEmail);
+    if (user) {
+      q.setUserGoogleId.run(sub, name || null, picture || null, user.id);
+      touchUser(q, user.id);
+      return q.findUserById.get(user.id);
+    }
+  }
+  if (!lcEmail) {
+    throw new Error("google account missing email");
+  }
+  const created = createUser(q, lcEmail);
+  q.setUserGoogleId.run(sub, name || null, picture || null, created.id);
+  return q.findUserById.get(created.id);
+}
+
+/**
+ * Find or create a user by Apple sub. Apple omits email on subsequent logins,
+ * so we always look up by apple_id first; email is only known on first auth.
+ */
+export function findOrCreateUserByApple(q, { sub, email, name }) {
+  if (!sub) throw new Error("apple sub required");
+  let user = q.findUserByAppleId.get(sub);
+  if (user) {
+    touchUser(q, user.id);
+    return user;
+  }
+  const lcEmail = (email || "").toLowerCase();
+  if (lcEmail) {
+    user = q.findUserByEmail.get(lcEmail);
+    if (user) {
+      q.setUserAppleId.run(sub, name || null, user.id);
+      touchUser(q, user.id);
+      return q.findUserById.get(user.id);
+    }
+  }
+  // Apple users without an email get a synthetic placeholder. They can update
+  // it later from /account; until then their identity is the apple sub.
+  const finalEmail = lcEmail || `apple_${sub.slice(0, 16)}@apple.turjuman.local`;
+  if (q.findUserByEmail.get(finalEmail)) {
+    // collision (extremely rare) — append timestamp to dodge UNIQUE
+    return findOrCreateUserByApple(q, { sub: sub + "_" + Date.now(), email, name });
+  }
+  const created = createUser(q, finalEmail);
+  q.setUserAppleId.run(sub, name || null, created.id);
+  return q.findUserById.get(created.id);
+}
+
+/**
+ * Find or create a user by phone (E.164). On first phone login a synthetic
+ * email is assigned; the user can swap to a real one in /account later.
+ */
+export function findOrCreateUserByPhone(q, phoneE164) {
+  if (!phoneE164 || !phoneE164.startsWith("+")) {
+    throw new Error("phone must be E.164 with +");
+  }
+  let user = q.findUserByPhone.get(phoneE164);
+  if (user) {
+    q.setUserPhone.run(phoneE164, Date.now(), user.id);
+    touchUser(q, user.id);
+    return q.findUserById.get(user.id);
+  }
+  // Synthetic email lets us reuse the existing email-keyed table layout.
+  const syntheticEmail = `phone_${phoneE164.replace(/[^0-9]/g, "")}@phone.turjuman.local`;
+  user = q.findUserByEmail.get(syntheticEmail);
+  if (!user) {
+    user = createUser(q, syntheticEmail);
+  }
+  q.setUserPhone.run(phoneE164, Date.now(), user.id);
+  return q.findUserById.get(user.id);
 }

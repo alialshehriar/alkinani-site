@@ -643,12 +643,43 @@ const TURJUMAN_BASE_URL = process.env.TURJUMAN_BASE_URL ||
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const RESEND_FROM = process.env.RESEND_FROM || "noreply@alkinani.live";
 
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const googleConfig = (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET)
+  ? { clientId: GOOGLE_CLIENT_ID, clientSecret: GOOGLE_CLIENT_SECRET }
+  : null;
+
+// HMAC secret for signing OAuth state cookies. Falls back to a derived value
+// from RESEND_API_KEY (always present in prod) so we don't require a new env
+// var for an in-flight 10-min cookie. Rotate by setting OAUTH_SIGNING_SECRET.
+const OAUTH_SIGNING_SECRET = process.env.OAUTH_SIGNING_SECRET ||
+  (RESEND_API_KEY ? `oauth-state-${RESEND_API_KEY.slice(-16)}` : "oauth-state-fallback-secret-change-me");
+
+const { readSmsConfigFromEnv } = await import("./turjuman/sms.js");
+const smsConfig = readSmsConfigFromEnv();
+
+const { loadApplePrivateKey } = await import("./turjuman/oauth-apple.js");
+const APPLE_TEAM_ID = process.env.APPLE_TEAM_ID;
+const APPLE_KEY_ID = process.env.APPLE_KEY_ID;
+const APPLE_SERVICE_ID = process.env.APPLE_SERVICE_ID;
+const APPLE_PRIVATE_KEY_PATH = process.env.APPLE_PRIVATE_KEY_PATH;
+const applePrivateKeyPem = APPLE_PRIVATE_KEY_PATH ? loadApplePrivateKey(APPLE_PRIVATE_KEY_PATH) : null;
+const appleConfig = (APPLE_TEAM_ID && APPLE_KEY_ID && APPLE_SERVICE_ID && applePrivateKeyPem)
+  ? { teamId: APPLE_TEAM_ID, keyId: APPLE_KEY_ID, serviceId: APPLE_SERVICE_ID, privateKeyPem: applePrivateKeyPem }
+  : null;
+
+console.log(`[turjuman] auth providers: google=${googleConfig ? "ON" : "off"} apple=${appleConfig ? "ON" : "off"} sms=${smsConfig.provider}`);
+
 app.use("/api/turjuman", turjumanRouter({
   q: turjumanQueries,
   resendApiKey: RESEND_API_KEY,
   resendFrom: RESEND_FROM,
   baseUrl: TURJUMAN_BASE_URL,
   isProduction: process.env.NODE_ENV === "production",
+  google: googleConfig,
+  apple: appleConfig,
+  oauthSigningSecret: OAUTH_SIGNING_SECRET,
+  smsConfig,
 }));
 
 // Hourly prune of expired tokens + sessions.

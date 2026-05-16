@@ -30,11 +30,67 @@ export async function fetchMe(): Promise<SessionUser | null> {
   }
 }
 
+export type AuthProviders = {
+  google: boolean;
+  apple: boolean;
+  phone: boolean;
+  email_magic_link: boolean;
+};
+
+/** Returns which sign-in methods are actually working in this deployment. */
+export async function fetchAuthProviders(): Promise<AuthProviders> {
+  try {
+    return await api<AuthProviders>("/api/turjuman/auth/providers");
+  } catch {
+    // Conservative fallback: assume only Apple+Google work (they're the
+    // simplest, no DNS or SMS provider needed).
+    return { google: true, apple: true, phone: false, email_magic_link: false };
+  }
+}
+
 export async function requestMagicLink(email: string): Promise<{ devFallback?: boolean }> {
   return api<{ sent: boolean; devFallback?: boolean }>(
     "/api/turjuman/auth/magic-link",
     { method: "POST", body: JSON.stringify({ email }) }
   );
+}
+
+/** Hard-redirect to Google's OAuth start. Returns to /tools/turjuman after. */
+export function startGoogleLogin(): void {
+  window.location.href = "/api/turjuman/auth/google/start";
+}
+
+/** Hard-redirect to Apple's OAuth start. Returns to /tools/turjuman after. */
+export function startAppleLogin(): void {
+  window.location.href = "/api/turjuman/auth/apple/start";
+}
+
+export async function requestPhoneOtp(phone: string): Promise<{ sent: boolean; channel: string }> {
+  return api<{ sent: boolean; channel: string }>(
+    "/api/turjuman/auth/phone/request",
+    { method: "POST", body: JSON.stringify({ phone }) }
+  );
+}
+
+export async function verifyPhoneOtp(phone: string, code: string): Promise<{ ok: boolean }> {
+  return api<{ ok: boolean }>(
+    "/api/turjuman/auth/phone/verify",
+    { method: "POST", body: JSON.stringify({ phone, code }) }
+  );
+}
+
+export function phoneAuthErrorMessage(err: unknown): string {
+  const msg = err instanceof Error ? err.message : "";
+  if (msg.includes("invalid_phone")) return "رقم الجوال غير صحيح. اكتبه بصيغة دولية (+9665XXXXXXXX).";
+  if (msg.includes("rate_limited")) return "أرسلنا كود قبل قليل. حاول بعد ساعة.";
+  if (msg.includes("send_failed")) return "تعذر إرسال الكود. حاول مرة ثانية أو استخدم Google.";
+  if (msg.includes("sms_not_configured")) return "تسجيل الجوال غير مفعّل حالياً. استخدم Google أو الإيميل.";
+  if (msg.includes("no_pending_otp")) return "ما طلبت كود لهذا الرقم. اطلب كود جديد.";
+  if (msg.includes("expired")) return "انتهت صلاحية الكود. اطلب كود جديد.";
+  if (msg.includes("wrong_code")) return "الكود غير صحيح. تأكد ثم حاول.";
+  if (msg.includes("too_many_attempts")) return "محاولات كثيرة. اطلب كود جديد.";
+  if (msg.includes("already_used")) return "تم استخدام هذا الكود. اطلب كود جديد.";
+  return "حدث خطأ. حاول مرة أخرى.";
 }
 
 export async function logout(): Promise<void> {
@@ -139,6 +195,86 @@ export function uploadFile(
     xhr.onerror = () => reject(new Error("upload_network"));
     xhr.send(fd);
   });
+}
+
+/* -------------------------- Live progress (SSE) -------------------------- */
+
+export type ProgressStage =
+  | "started" | "probing" | "downloading" | "translating"
+  | "burning" | "finalizing" | "done" | "error";
+
+export type ProgressEvent = {
+  stage: ProgressStage;
+  pct: number;
+  durationSec?: number;
+  charged?: number;
+  error?: string;
+  t?: number;
+};
+
+/**
+ * Subscribe to live job progress over SSE. Returns an unsubscribe.
+ * The browser auto-reconnects on transient drops; we only handle the
+ * happy + terminal paths here.
+ */
+export function listenToJob(
+  jobId: string,
+  onEvent: (e: ProgressEvent) => void,
+  onTerminal?: (e: ProgressEvent) => void
+): () => void {
+  const es = new EventSource(`/api/turjuman/jobs/${jobId}/stream`, {
+    withCredentials: true,
+  });
+  const handle = (terminal: boolean) => (raw: MessageEvent) => {
+    try {
+      const evt = JSON.parse(raw.data) as ProgressEvent;
+      onEvent(evt);
+      if (terminal) {
+        onTerminal?.(evt);
+        es.close();
+      }
+    } catch { /* ignore parse errors */ }
+  };
+  es.addEventListener("progress", handle(false));
+  es.addEventListener("done", handle(true));
+  es.addEventListener("error", handle(true));
+  return () => es.close();
+}
+
+/* -------------------------- Payments -------------------------- */
+
+export type CheckoutTier = "starter" | "pro" | "studio";
+
+export type TierInfo = {
+  id: CheckoutTier;
+  label: string;
+  minutes: number;
+  price_sar: number;
+  configured: boolean;
+};
+
+export async function fetchTiers(): Promise<TierInfo[]> {
+  const data = await api<{ tiers: TierInfo[] }>("/api/turjuman/payments/tiers");
+  return data.tiers;
+}
+
+export async function createCheckout(tier: CheckoutTier): Promise<string> {
+  const data = await api<{ url: string }>("/api/turjuman/payments/create-checkout", {
+    method: "POST",
+    body: JSON.stringify({ tier }),
+  });
+  return data.url;
+}
+
+export function checkoutErrorMessage(err: unknown): string {
+  const msg = err instanceof Error ? err.message : "";
+  if (msg.includes("unauthenticated") || msg.includes("session_expired")) {
+    return "سجّل دخولك أولاً ثم أعد المحاولة.";
+  }
+  if (msg.includes("payments_disabled")) return "الدفع غير متاح حالياً.";
+  if (msg.includes("tier_unavailable")) return "هذي الباقة قيد التفعيل.";
+  if (msg.includes("invalid_tier")) return "باقة غير صحيحة.";
+  return "تعذّر فتح الدفع. حاول مرة ثانية.";
 }
 
 export function jobErrorMessage(err: unknown): string {
