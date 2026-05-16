@@ -24,13 +24,17 @@ export function ensureJobsSchema(db) {
   `);
   // Forward-compatible column adds (idempotent).
   try { db.exec("ALTER TABLE turjuman_jobs ADD COLUMN output_mp4_path TEXT"); } catch {}
+  // Optional user-supplied source language hint ("ar"/"en"/"es"/"zh" or NULL for auto-detect).
+  try { db.exec("ALTER TABLE turjuman_jobs ADD COLUMN source_lang TEXT"); } catch {}
+  // Subtitle size preference: 'S' | 'M' | 'L'. NULL → treat as 'M' (default).
+  try { db.exec("ALTER TABLE turjuman_jobs ADD COLUMN subtitle_size TEXT"); } catch {}
 }
 
 export function makeJobsQueries(db) {
   return {
     insertJob: db.prepare(`
-      INSERT INTO turjuman_jobs (id, user_id, source_url, target_lang, status, created_at)
-      VALUES (?, ?, ?, ?, 'queued', ?)
+      INSERT INTO turjuman_jobs (id, user_id, source_url, target_lang, source_lang, subtitle_size, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)
     `),
     findJob: db.prepare(`SELECT * FROM turjuman_jobs WHERE id = ?`),
     listUserJobs: db.prepare(`
@@ -77,8 +81,22 @@ export function makeJobsQueries(db) {
   };
 }
 
-export function createJob(q, userId, sourceUrl, targetLang) {
+/**
+ * Create a queued job. `sourceLang` is optional: pass null/undefined for
+ * Gemini auto-detect, or one of "ar"/"en"/"es"/"zh" when the user picked it
+ * explicitly. `subtitleSize` ∈ {"S","M","L"} controls burn-in font scale,
+ * defaulting to "M" when omitted.
+ */
+export function createJob(q, userId, sourceUrl, targetLang, sourceLang, subtitleSize) {
   const id = generateUserId();
-  q.insertJob.run(id, userId, sourceUrl, targetLang, Date.now());
+  q.insertJob.run(
+    id,
+    userId,
+    sourceUrl,
+    targetLang,
+    sourceLang ?? null,
+    subtitleSize ?? null,
+    Date.now()
+  );
   return q.findJob.get(id);
 }

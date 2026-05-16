@@ -72,7 +72,7 @@ const LANGUAGE_CONFIG = {
   },
 };
 
-const PROMPT = (targetLang, chunkOffsetSec) => {
+const PROMPT = (targetLang, chunkOffsetSec, sourceLang) => {
   const lang = LANGUAGE_CONFIG[targetLang] ?? {
     name: targetLang,
     conventions: ["natural fluent translation for the requested target language."],
@@ -81,6 +81,19 @@ const PROMPT = (targetLang, chunkOffsetSec) => {
   const chunkRule = Number.isFinite(chunkOffsetSec)
     ? `- This attached media is one chunk from a longer source. Return timestamps RELATIVE to the start of THIS attached chunk only; do not add the ${chunkOffsetSec}s global offset.`
     : null;
+
+  // When the user explicitly picks a source language, tell Gemini up front.
+  // This avoids two real failure modes:
+  //   - "auto-detect" picks the wrong language on short or accented clips
+  //     (e.g. spoken Najdi Arabic misread as Persian) → mistranslation.
+  //   - The model "translates" speech that's already in the target language
+  //     (Arabic→Arabic) and produces filler/no-cues.
+  const sourceInfo = sourceLang && LANGUAGE_CONFIG[sourceLang]
+    ? LANGUAGE_CONFIG[sourceLang].name
+    : null;
+  const sourceLine = sourceInfo
+    ? `Source language: ${sourceInfo}. The spoken audio is in ${sourceInfo}; do NOT attempt auto-detect.`
+    : "Source language: auto-detect from audio.";
 
   return `
 You are a professional subtitle translator.
@@ -93,6 +106,7 @@ have:
 - "end": seconds, float, when the line ends
 - "text": the spoken line translated into the target language
 
+${sourceLine}
 Target language: ${lang.name}
 
 Language conventions:
@@ -142,6 +156,7 @@ export async function translateChunked({
   chunks,
   mimeType,
   targetLang,
+  sourceLang,
   log,
   concurrency = 2,
   onProgress,
@@ -166,6 +181,7 @@ export async function translateChunked({
           mediaPath: ch.path,
           mimeType,
           targetLang,
+          sourceLang,
           log: () => {}, // suppress per-chunk noise; we log aggregate below
           chunkOffsetSec: ch.offsetSec,
         }), {
@@ -202,7 +218,7 @@ export async function translateChunked({
  * Returns the parsed cues array (with timestamps relative to the start of
  * the supplied media).
  */
-export async function translateMedia({ apiKey, mediaPath, mimeType, targetLang, log, chunkOffsetSec }) {
+export async function translateMedia({ apiKey, mediaPath, mimeType, targetLang, sourceLang, log, chunkOffsetSec }) {
   if (!apiKey) throw new Error("missing_gemini_key");
 
   const stat = await fs.stat(mediaPath);
@@ -224,7 +240,7 @@ export async function translateMedia({ apiKey, mediaPath, mimeType, targetLang, 
       role: "user",
       parts: [
         mediaPart,
-        { text: PROMPT(targetLang, chunkOffsetSec) },
+        { text: PROMPT(targetLang, chunkOffsetSec, sourceLang) },
       ],
     }],
     generationConfig: {

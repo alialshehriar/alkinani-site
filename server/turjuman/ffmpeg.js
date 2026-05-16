@@ -135,11 +135,19 @@ function probeMediaDuration(filePath) {
 // geometric/humanist sans options that pop with a thick outline. SF Arabic
 // is Apple's modern screen-optimized Arabic typeface — bold weight reads
 // cleanly at any size. Fallbacks via fontconfig if the primary is missing.
+// On the VPS (Ubuntu 24.04, package fonts-noto-core) the only Arabic faces
+// guaranteed present are Noto Sans/Naskh/Kufi Arabic, each with a real Bold
+// weight. The previous "SF Arabic" was an Apple-only name → fontconfig
+// substituted it to NotoSansArabic-Regular (book weight), which is what was
+// washing out under thick outlines. Switching to "Noto Sans Arabic" + the
+// existing Bold flag in [V4+ Styles] gives genuinely thicker strokes without
+// requiring a new apt install. If IBM Plex Sans Arabic or Tajawal Bold gets
+// added to the host later, libass will prefer the first match via fontconfig.
 const FONTS = {
-  ar: "SF Arabic",
-  en: "Helvetica Neue",
-  es: "Helvetica Neue",
-  zh: "PingFang SC",
+  ar: "IBM Plex Sans Arabic,Tajawal,Noto Sans Arabic",
+  en: "Inter,Helvetica Neue,Arial",
+  es: "Inter,Helvetica Neue,Arial",
+  zh: "Noto Sans CJK SC,PingFang SC",
 };
 
 /**
@@ -216,9 +224,11 @@ function srtToAss(srtText, { w, h, font, fontSize, marginV, marginH }) {
   }
 
   // Outline + shadow scale with frame size for consistent visual weight
-  // across resolutions. 5px outline + 2px shadow on a 720p frame.
-  const outline = Math.max(3, Math.round(h * 0.0065));
-  const shadow = Math.max(1, Math.round(h * 0.0028));
+  // across resolutions. Bumped from 0.65% → 1.0% of frame height (≈7px @ 720p,
+  // ≈10px @ 1080p) so the white text stays readable on any background.
+  // Shadow tightened to 2.2px @ 720p to add depth without softening edges.
+  const outline = Math.max(4, Math.round(h * 0.010));
+  const shadow = Math.max(1, Math.round(h * 0.003));
 
   const header = [
     "[Script Info]",
@@ -259,28 +269,44 @@ function srtToAss(srtText, { w, h, font, fontSize, marginV, marginH }) {
   return `${header}\n${events}\n`;
 }
 
+// User-facing size picker → frame-height multiplier on the base font size.
+// "M" is the canonical default and matches what gets shown when subtitleSize
+// is null/undefined (legacy jobs predating the column).
+//
+// Calibrated from the 2026-05-17 readability pass — the previous 8% base
+// was still washing out on busy backgrounds; bumping the M default to 10.5%
+// and giving users an explicit "L" knob covers Ali's stated complaint
+// without making short clips look like a meme.
+const SIZE_SCALE = { S: 0.85, M: 1.0, L: 1.18 };
+const SIZE_BASE_FRAC = 0.105; // ≈10.5% of frame height at "M"
+
 /**
  * Burn the SRT into the source video, producing an output MP4.
  * Generates a PlayRes-locked ASS file from the SRT so libass renders
  * margins/fonts in actual pixel space — works on landscape, portrait,
  * and letterboxed sources alike.
+ *
+ * `subtitleSize` ∈ {"S","M","L"} multiplies the base font size; null/undefined
+ * is treated as "M".
  */
-export async function burnSubtitles({ videoPath, srtPath, outPath, targetLang }) {
+export async function burnSubtitles({ videoPath, srtPath, outPath, targetLang, subtitleSize }) {
   const font = FONTS[targetLang] ?? "Noto Sans";
 
   // Probe first; if it fails we still try a sensible default.
   const dims = (await probeDims(videoPath)) ?? { w: 1280, h: 720 };
   const { w, h } = dims;
 
+  const sizeKey = (subtitleSize === "S" || subtitleSize === "L") ? subtitleSize : "M";
+  const sizeMul = SIZE_SCALE[sizeKey];
+
   // Modern social-video tuning (TikTok/Reels readability on small screens).
   //   MarginV  ≈ 13% of frame height — clear breathing room from bottom edge
-  //              (was 7% — text was squeezed against the bottom)
-  //   FontSize ≈ 8% of frame height — bigger than v1's 6% so each cue
-  //              dominates the lower-third without being huge
-  //   marginH  ≈ 8% — narrower text column → fewer awkward wraps
-  const marginV = Math.max(80, Math.min(200, Math.round(h * 0.13)));
-  const fontSize = Math.max(44, Math.min(110, Math.round(h * 0.08)));
-  const marginH = Math.max(60, Math.min(180, Math.round(w * 0.08)));
+  //   FontSize ≈ 10.5% × sizeMul of frame height (was 8%; Ali reported still
+  //              not big enough for older relatives reading on a phone)
+  //   marginH  ≈ 7% — narrow text column → fewer awkward wraps
+  const marginV = Math.max(80, Math.min(220, Math.round(h * 0.13)));
+  const fontSize = Math.max(44, Math.min(140, Math.round(h * SIZE_BASE_FRAC * sizeMul)));
+  const marginH = Math.max(50, Math.min(180, Math.round(w * 0.07)));
 
   const srtText = await fs.readFile(srtPath, "utf8");
   const assText = srtToAss(srtText, { w, h, font, fontSize, marginV, marginH });

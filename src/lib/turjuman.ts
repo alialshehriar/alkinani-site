@@ -140,10 +140,24 @@ export type Job = {
   completed_at: number | null;
 };
 
-export async function createJob(url: string, targetLang: string): Promise<Job> {
+export type JobOptions = {
+  /** "ar" | "en" | "es" | "zh" or null/undefined for Gemini auto-detect. */
+  sourceLang?: string | null;
+  /** Subtitle burn-in size: S/M/L. Defaults to M when omitted. */
+  subtitleSize?: "S" | "M" | "L" | null;
+};
+
+export async function createJob(
+  url: string,
+  targetLang: string,
+  opts: JobOptions = {}
+): Promise<Job> {
+  const body: Record<string, unknown> = { url, target_lang: targetLang };
+  if (opts.sourceLang) body.source_lang = opts.sourceLang;
+  if (opts.subtitleSize) body.subtitle_size = opts.subtitleSize;
   const data = await api<{ job: Job }>("/api/turjuman/jobs", {
     method: "POST",
-    body: JSON.stringify({ url, target_lang: targetLang }),
+    body: JSON.stringify(body),
   });
   return data.job;
 }
@@ -168,12 +182,15 @@ export function mp4DownloadUrl(id: string): string {
 export function uploadFile(
   file: File,
   targetLang: string,
-  onProgress: (pct: number) => void
+  onProgress: (pct: number) => void,
+  opts: JobOptions = {}
 ): Promise<Job> {
   return new Promise((resolve, reject) => {
     const fd = new FormData();
     fd.append("file", file);
     fd.append("target_lang", targetLang);
+    if (opts.sourceLang) fd.append("source_lang", opts.sourceLang);
+    if (opts.subtitleSize) fd.append("subtitle_size", opts.subtitleSize);
 
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/turjuman/jobs/upload");

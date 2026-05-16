@@ -134,3 +134,41 @@ Script behaviour:
 
 **Rollback:** the backup line is printed at the end — single `cp` + `pm2
 restart` reverts everything.
+
+---
+
+## 3. Optional: heavier Arabic burn-in font (IBM Plex / Tajawal)
+
+Default burn-in font on the VPS is now **Noto Sans Arabic** (its Bold weight
+ships with `fonts-noto-core` and is already on the host). Ali asked about
+Tajawal Bold or IBM Plex Sans Arabic Bold — both are heavier and tend to
+read better on busy backgrounds.
+
+Neither is in Ubuntu 24.04's default repos in Arabic-capable form
+(`fonts-ibm-plex` ships Latin-only; Tajawal isn't packaged at all). If we
+want either of them as the primary face:
+
+```bash
+# IBM Plex Sans Arabic — from Google Fonts CDN tarball
+ssh root@72.62.116.92 '
+  mkdir -p /usr/share/fonts/truetype/ibm-plex-arabic
+  cd /tmp && rm -rf ibm-plex-arabic && \
+  wget -q https://github.com/IBM/plex/releases/latest/download/TrueType.zip && \
+  unzip -q TrueType.zip && \
+  cp "TrueType/IBM-Plex-Sans-Arabic/"*.ttf /usr/share/fonts/truetype/ibm-plex-arabic/ && \
+  fc-cache -f
+'
+
+# Tajawal — Google Fonts download
+ssh root@72.62.116.92 '
+  mkdir -p /usr/share/fonts/truetype/tajawal
+  cd /tmp && wget -q "https://fonts.google.com/download?family=Tajawal" -O tajawal.zip && \
+  unzip -q -o tajawal.zip -d tajawal/ && \
+  cp tajawal/static/*.ttf /usr/share/fonts/truetype/tajawal/ && \
+  fc-cache -f
+'
+```
+
+`server/turjuman/ffmpeg.js` already lists `IBM Plex Sans Arabic,Tajawal,Noto
+Sans Arabic` — libass/fontconfig will start preferring whichever face is
+installed first. **No code change** is needed after the install.

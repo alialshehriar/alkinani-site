@@ -21,6 +21,23 @@ import { validateUrl } from "./yt-dlp.js";
 import { subscribeToJob } from "./job-events.js";
 
 const ALLOWED_TARGETS = new Set(["ar", "en", "es", "zh"]);
+// Sources accept the same code set plus null/undefined for Gemini auto-detect.
+const ALLOWED_SOURCES = new Set(["ar", "en", "es", "zh"]);
+const ALLOWED_SIZES = new Set(["S", "M", "L"]);
+
+function readSourceLang(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim().toLowerCase();
+  if (!s || s === "auto") return null;
+  return ALLOWED_SOURCES.has(s) ? s : "__invalid__";
+}
+
+function readSubtitleSize(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim().toUpperCase();
+  if (!s) return null;
+  return ALLOWED_SIZES.has(s) ? s : "__invalid__";
+}
 
 export function jobsRouter({ q, jobsQ, jobsRoot, isProduction }) {
   const router = express.Router();
@@ -68,6 +85,18 @@ export function jobsRouter({ q, jobsQ, jobsRoot, isProduction }) {
     if (!ALLOWED_TARGETS.has(target)) {
       return res.status(400).json({ error: "invalid_target_lang" });
     }
+    const source = readSourceLang(req.body?.source_lang);
+    if (source === "__invalid__") {
+      return res.status(400).json({ error: "invalid_source_lang" });
+    }
+    if (source && source === target) {
+      return res.status(400).json({ error: "same_source_target" });
+    }
+    const size = readSubtitleSize(req.body?.subtitle_size);
+    if (size === "__invalid__") {
+      return res.status(400).json({ error: "invalid_subtitle_size" });
+    }
+
     const v = await validateUrl(url);
     if (!v.ok) return res.status(400).json({ error: `url_${v.error}` });
 
@@ -79,7 +108,7 @@ export function jobsRouter({ q, jobsQ, jobsRoot, isProduction }) {
       });
     }
 
-    const job = createJob(jobsQ, me.userId, url, target);
+    const job = createJob(jobsQ, me.userId, url, target, source, size);
     return res.json({ job });
   });
 
@@ -138,11 +167,25 @@ export function jobsRouter({ q, jobsQ, jobsRoot, isProduction }) {
         await fs.unlink(tempPath).catch(() => {});
         return res.status(400).json({ error: "invalid_target_lang" });
       }
+      const source = readSourceLang(fields.source_lang);
+      if (source === "__invalid__") {
+        await fs.unlink(tempPath).catch(() => {});
+        return res.status(400).json({ error: "invalid_source_lang" });
+      }
+      if (source && source === target) {
+        await fs.unlink(tempPath).catch(() => {});
+        return res.status(400).json({ error: "same_source_target" });
+      }
+      const size = readSubtitleSize(fields.subtitle_size);
+      if (size === "__invalid__") {
+        await fs.unlink(tempPath).catch(() => {});
+        return res.status(400).json({ error: "invalid_subtitle_size" });
+      }
 
       // Create job first, then move temp file into the job's dir under a
       // deterministic name. Pipeline reads file:// path directly.
       const sourceRefPlaceholder = "upload://"; // overwritten below
-      const job = createJob(jobsQ, me.userId, sourceRefPlaceholder, target);
+      const job = createJob(jobsQ, me.userId, sourceRefPlaceholder, target, source, size);
       const jobDir = path.join(jobsRoot, job.id);
       await fs.mkdir(jobDir, { recursive: true });
       const finalPath = path.join(jobDir, `source.${savedExt}`);

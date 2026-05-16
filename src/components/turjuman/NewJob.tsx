@@ -8,11 +8,36 @@ type Props = {
   freeMinutesTotal: number | null;
 };
 
-const TARGETS = [
+type LangCode = "ar" | "en" | "es" | "zh";
+type SourceCode = LangCode | "auto";
+type SubtitleSize = "S" | "M" | "L";
+
+const LANGS: { value: LangCode; label: string }[] = [
   { value: "ar", label: "عربي" },
   { value: "en", label: "English" },
   { value: "es", label: "Español" },
   { value: "zh", label: "中文" },
+];
+
+const SOURCES: { value: SourceCode; label: string }[] = [
+  { value: "auto", label: "اكتشاف تلقائي" },
+  ...LANGS,
+];
+
+// Quick-pick directional presets (source → target). Each chip sets both
+// selects in one click — the common cases in Ali's audience (Saudi viewer
+// translating EN clips to Arabic, then sharing AR talks to EN).
+const QUICK_PAIRS: { source: LangCode; target: LangCode; label: string }[] = [
+  { source: "en", target: "ar", label: "إنجليزي ← عربي" },
+  { source: "ar", target: "en", label: "عربي ← إنجليزي" },
+  { source: "es", target: "ar", label: "إسباني ← عربي" },
+  { source: "zh", target: "ar", label: "صيني ← عربي" },
+];
+
+const SUBTITLE_SIZES: { value: SubtitleSize; label: string; hint: string }[] = [
+  { value: "S", label: "صغير", hint: "S" },
+  { value: "M", label: "متوسط", hint: "M" },
+  { value: "L", label: "كبير", hint: "L" },
 ];
 
 const MAX_UPLOAD_MB = 500;
@@ -24,12 +49,41 @@ export default function NewJob({
   freeMinutesTotal,
 }: Props) {
   const [url, setUrl] = useState("");
-  const [target, setTarget] = useState("ar");
+  const [source, setSource] = useState<SourceCode>("auto");
+  const [target, setTarget] = useState<LangCode>("ar");
+  const [size, setSize] = useState<SubtitleSize>("M");
   const [submitting, setSubmitting] = useState(false);
   const [progressMsg, setProgressMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  function swap() {
+    // Only meaningful when source is an explicit lang. With "auto" we set
+    // source = current target and leave target alone except to pick a
+    // different language so the pair never collapses to X→X.
+    if (source === "auto") {
+      setSource(target);
+      setTarget(target === "ar" ? "en" : "ar");
+      return;
+    }
+    const s = source;
+    const t = target;
+    setSource(t);
+    setTarget(s);
+  }
+
+  function applyPreset(s: LangCode, t: LangCode) {
+    setSource(s);
+    setTarget(t);
+  }
+
+  function jobOpts() {
+    return {
+      sourceLang: source === "auto" ? null : source,
+      subtitleSize: size,
+    } as const;
+  }
 
   function handleSubmitOk() {
     setUrl("");
@@ -52,10 +106,14 @@ export default function NewJob({
   async function submitUrl(e: React.FormEvent) {
     e.preventDefault();
     if (!url) return;
+    if (source !== "auto" && source === target) {
+      setError("اللغة المصدر واللغة الهدف ما يصيرون نفس الشيء.");
+      return;
+    }
     setError(null);
     setSubmitting(true);
     try {
-      await createJob(url, target);
+      await createJob(url, target, jobOpts());
       handleSubmitOk();
     } catch (err) {
       handleSubmitErr(err);
@@ -67,13 +125,22 @@ export default function NewJob({
       setError(`الملف أكبر من ${MAX_UPLOAD_MB} ميجا.`);
       return;
     }
+    if (source !== "auto" && source === target) {
+      setError("اللغة المصدر واللغة الهدف ما يصيرون نفس الشيء.");
+      return;
+    }
     setError(null);
     setSubmitting(true);
     setProgressMsg("جاري رفع الملف…");
     try {
-      await uploadFile(file, target, (pct) => {
-        setProgressMsg(`جاري الرفع… ${pct}٪`);
-      });
+      await uploadFile(
+        file,
+        target,
+        (pct) => {
+          setProgressMsg(`جاري الرفع… ${pct}٪`);
+        },
+        jobOpts()
+      );
       handleSubmitOk();
     } catch (err) {
       handleSubmitErr(err);
@@ -91,6 +158,9 @@ export default function NewJob({
     const f = e.dataTransfer.files?.[0];
     if (f) void submitFile(f);
   }
+
+  const selectClass =
+    "rounded-lg border border-ink-700/60 bg-ink-950 px-3 py-2 text-sm text-ink-100 focus:border-ember-400 focus:outline-none";
 
   return (
     <div className="space-y-3">
@@ -165,19 +235,98 @@ export default function NewJob({
           <span>اضغط هنا لرفع فيديو من معرض الجوال</span>
         </button>
 
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <label className="text-sm text-ink-300">لغة الترجمة:</label>
-          <select
-            value={target}
-            onChange={(e) => setTarget(e.target.value)}
-            className="rounded-lg border border-ink-700/60 bg-ink-950 px-3 py-2 text-ink-100 focus:border-ember-400 focus:outline-none"
-          >
-            {TARGETS.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.label}
-              </option>
-            ))}
-          </select>
+        {/* Language pair: source → target + swap button. */}
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_1fr]">
+          <label className="flex flex-col gap-1 text-xs text-ink-400">
+            <span>اللغة المصدر</span>
+            <select
+              value={source}
+              onChange={(e) => setSource(e.target.value as SourceCode)}
+              className={selectClass}
+            >
+              {SOURCES.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="flex items-end justify-center sm:pb-1">
+            <button
+              type="button"
+              onClick={swap}
+              title="تبديل اللغتين"
+              aria-label="تبديل اللغتين"
+              className="rounded-full border border-ink-700/60 bg-ink-950 px-3 py-2 text-base text-ink-300 transition hover:border-ember-400 hover:text-ember-400"
+            >
+              ↔
+            </button>
+          </div>
+
+          <label className="flex flex-col gap-1 text-xs text-ink-400">
+            <span>اللغة الهدف</span>
+            <select
+              value={target}
+              onChange={(e) => setTarget(e.target.value as LangCode)}
+              className={selectClass}
+            >
+              {LANGS.map((t) => (
+                <option key={t.value} value={t.value}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {/* Quick directional presets. */}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-ink-500">اختصارات:</span>
+          {QUICK_PAIRS.map((p) => {
+            const active = source === p.source && target === p.target;
+            return (
+              <button
+                key={`${p.source}-${p.target}`}
+                type="button"
+                onClick={() => applyPreset(p.source, p.target)}
+                className={`rounded-full border px-3 py-1 text-xs transition ${
+                  active
+                    ? "border-ember-400 bg-ember-500/10 text-ember-300"
+                    : "border-ink-700/60 bg-ink-950/60 text-ink-300 hover:border-ember-400/60 hover:text-ember-300"
+                }`}
+              >
+                {p.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Subtitle burn-in size + submit. */}
+        <div className="mt-4 flex flex-wrap items-end gap-3">
+          <label className="flex flex-col gap-1 text-xs text-ink-400">
+            <span>حجم الترجمة على الفيديو</span>
+            <div className="inline-flex overflow-hidden rounded-lg border border-ink-700/60 bg-ink-950">
+              {SUBTITLE_SIZES.map((s) => (
+                <button
+                  key={s.value}
+                  type="button"
+                  onClick={() => setSize(s.value)}
+                  className={`px-3 py-2 text-sm transition ${
+                    size === s.value
+                      ? "bg-ember-500/15 text-ember-300"
+                      : "text-ink-300 hover:bg-ink-800/60"
+                  }`}
+                  aria-pressed={size === s.value}
+                  aria-label={`حجم ${s.label}`}
+                  title={s.label}
+                >
+                  {s.hint}
+                </button>
+              ))}
+            </div>
+          </label>
+
           <button
             type="submit"
             disabled={submitting || !url}

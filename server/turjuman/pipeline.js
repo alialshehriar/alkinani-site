@@ -201,6 +201,7 @@ async function runJob(job, jobsRoot, geminiApiKey, log) {
           chunks,
           mimeType: audio.mimeType,
           targetLang: job.target_lang,
+          sourceLang: job.source_lang ?? null,
           log,
           concurrency: chunkConcurrency,
           onProgress: ({ completed, total }) => {
@@ -218,6 +219,7 @@ async function runJob(job, jobsRoot, geminiApiKey, log) {
         mediaPath: audio?.path ?? videoPath,
         mimeType: audio?.mimeType ?? "video/mp4",
         targetLang: job.target_lang,
+        sourceLang: job.source_lang ?? null,
         log,
       });
     }
@@ -235,7 +237,13 @@ async function runJob(job, jobsRoot, geminiApiKey, log) {
 
   log(`[turjuman] burning subtitles into video for ${job.id}…`);
   const tBurn = Date.now();
-  await burnSubtitles({ videoPath, srtPath, outPath: mp4Path, targetLang: job.target_lang });
+  await burnSubtitles({
+    videoPath,
+    srtPath,
+    outPath: mp4Path,
+    targetLang: job.target_lang,
+    subtitleSize: job.subtitle_size ?? null,
+  });
   log(`[turjuman] burn took ${((Date.now() - tBurn) / 1000).toFixed(1)}s`);
   emitJobEvent(job.id, { stage: "finalizing", pct: 95 });
 
