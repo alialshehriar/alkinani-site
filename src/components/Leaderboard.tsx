@@ -50,7 +50,7 @@ const COPY = {
     activity: "آخر النتائج",
     shareTitle: "شارك نتيجتك",
     shareText: (score: number, rank: number) =>
-      `سجلت ${score} نقطة في تحدي السرعة عند علي الكناني! المركز #${rank} عالمياً 🔥\nتحدّاني:`,
+      `سجلت ${score} نقطة في تحدّي السرعة على alkinani.live — المركز #${rank} 🔥\nتحدّاني:`,
     shareBtn: "نشر على X",
     copyLink: "انسخ الرابط",
     copied: "تم النسخ!",
@@ -78,7 +78,7 @@ const COPY = {
     activity: "Recent runs",
     shareTitle: "Share your score",
     shareText: (score: number, rank: number) =>
-      `I just scored ${score} on Ali Alkinani's speed challenge — rank #${rank} worldwide 🔥\nbeat me:`,
+      `Just scored ${score} on the speed challenge at alkinani.live — rank #${rank} 🔥\nbeat me:`,
     shareBtn: "Share on X",
     copyLink: "Copy link",
     copied: "Copied!",

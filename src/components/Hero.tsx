@@ -85,8 +85,16 @@ export default function Hero({ lang }: { lang: Lang }) {
           </p>
 
           <h1
-            className="font-bold leading-[0.9] text-ink-100 hero-shown"
-            style={{ fontSize: "clamp(3.2rem, 14vw, 9rem)", animationDelay: "0.3s" }}
+            className="font-bold text-ink-100 hero-shown"
+            style={{
+              fontSize: "clamp(3.2rem, 14vw, 9rem)",
+              // Arabic glyphs have dots above + diacritics. Tight leading (0.9)
+              // crashes them into each other on multi-line wraps. Looser leading
+              // for Arabic, tighter for English.
+              lineHeight: lang === "ar" ? 1.18 : 0.9,
+              letterSpacing: lang === "ar" ? "0" : "-0.02em",
+              animationDelay: "0.3s",
+            }}
           >
             {t(copy.hero.name, lang)}
           </h1>
@@ -133,9 +141,58 @@ export default function Hero({ lang }: { lang: Lang }) {
             </a>
           </div>
 
+          {/* Quick-jump shortcuts — gives returning visitors direct access to
+              the interactive sections without scrolling through the story arc. */}
+          <div
+            className="mt-6 grid grid-cols-2 gap-2 hero-shown sm:mt-8 sm:flex sm:flex-wrap sm:gap-2.5"
+            style={{ animationDelay: "1.2s" }}
+          >
+            {[
+              { href: "/tools/turjuman", emoji: "🎬", labelAr: "ترجمان",     labelEn: "Turjuman", subAr: "ترجمة فيديو AI", subEn: "AI video subs", featured: true },
+              { href: "#radar",    emoji: "📡", labelAr: "الرادار",    labelEn: "Radar",    subAr: "إشارات AI",      subEn: "AI signals", featured: false },
+              { href: "#lab",      emoji: "🎮", labelAr: "العب",        labelEn: "Play",     subAr: "٣ ألعاب",        subEn: "3 games", featured: false },
+              { href: "#throne",   emoji: "👑", labelAr: "العرش",       labelEn: "Throne",   subAr: "أبطال الموقع",   subEn: "leaderboard", featured: false },
+              { href: "#ask",      emoji: "💬", labelAr: "اسأل علي",   labelEn: "Ask Ali",   subAr: "محادثة AI",     subEn: "AI chat", featured: false },
+            ].map((s) => (
+              <a
+                key={s.href}
+                href={s.href}
+                data-cursor="hover"
+                className={
+                  s.featured
+                    ? "group flex items-center gap-2.5 rounded-2xl border border-ember-500/40 bg-gradient-to-br from-ember-500/15 to-ember-400/5 px-3 py-2.5 text-start backdrop-blur-md transition hover:-translate-y-0.5 hover:border-ember-400/80 hover:bg-ember-500/20 sm:px-3.5 sm:py-2"
+                    : "group flex items-center gap-2.5 rounded-2xl border border-ink-800/70 bg-ink-900/30 px-3 py-2.5 text-start backdrop-blur-md transition hover:-translate-y-0.5 hover:border-ember-500/60 hover:bg-ink-900/60 sm:px-3.5 sm:py-2"
+                }
+              >
+                <span className="text-base sm:text-lg" aria-hidden>{s.emoji}</span>
+                <span className="flex flex-col leading-tight">
+                  <span className={
+                    s.featured
+                      ? "flex items-center gap-1.5 text-[11px] font-medium text-ember-300 group-hover:text-ember-200 sm:text-xs"
+                      : "text-[11px] font-medium text-ink-100 group-hover:text-ember-400 sm:text-xs"
+                  }>
+                    {lang === "ar" ? s.labelAr : s.labelEn}
+                    {s.featured && (
+                      <span className="rounded-full bg-ember-500/20 px-1.5 py-0.5 text-[8px] uppercase tracking-[0.18em] text-ember-300 sm:text-[9px]">
+                        {lang === "ar" ? "جديد" : "new"}
+                      </span>
+                    )}
+                  </span>
+                  <span className={
+                    s.featured
+                      ? "text-[9px] uppercase tracking-[0.18em] text-ember-400/70 sm:text-[10px]"
+                      : "text-[9px] uppercase tracking-[0.18em] text-ink-500 sm:text-[10px]"
+                  }>
+                    {lang === "ar" ? s.subAr : s.subEn}
+                  </span>
+                </span>
+              </a>
+            ))}
+          </div>
+
           <p
             className="mt-5 text-[10px] uppercase tracking-[0.3em] text-ink-600 hero-shown sm:mt-6"
-            style={{ animationDelay: "1.35s" }}
+            style={{ animationDelay: "1.4s" }}
           >
             {lang === "ar" ? "↗ المس البحر" : "↗ tap the sea"}
           </p>

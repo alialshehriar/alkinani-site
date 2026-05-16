@@ -1,0 +1,183 @@
+{
+  "_doc": "AI Radar source config — edit then redeploy. Authority weight (1.0-3.0) boosts items posted by/originating from this source. velocityWeight scales velocity impact in score.",
+
+  "x": {
+    "enabled": true,
+    "scrapeViaCodadBrowser": true,
+    "comment": "X scraping uses codad agent-browser on Chrome :9223. Falls back to nitter if unreachable. Track these accounts' fresh tweets and search queries.",
+    "accounts": [
+      { "handle": "simonw",        "weight": 2.5, "tag": "indie-builder" },
+      { "handle": "karpathy",      "weight": 3.0, "tag": "research" },
+      { "handle": "swyx",          "weight": 2.2, "tag": "ai-engineer" },
+      { "handle": "sama",          "weight": 2.5, "tag": "labs" },
+      { "handle": "AnthropicAI",   "weight": 2.8, "tag": "labs" },
+      { "handle": "OpenAI",        "weight": 2.5, "tag": "labs" },
+      { "handle": "googledeepmind","weight": 2.3, "tag": "labs" },
+      { "handle": "huggingface",   "weight": 2.0, "tag": "platform" },
+      { "handle": "LangChainAI",   "weight": 1.8, "tag": "tools" },
+      { "handle": "perplexity_ai", "weight": 2.0, "tag": "products" },
+      { "handle": "cursor_ai",     "weight": 2.2, "tag": "tools" },
+      { "handle": "vercel",        "weight": 1.8, "tag": "platform" }
+    ],
+    "queries": [
+      "introducing AI",
+      "open source LLM",
+      "released today",
+      "now available",
+      "launching",
+      "we built"
+    ],
+    "minLikesForFreshTweet": 30,
+    "freshnessWindowMinutes": 240
+  },
+
+  "reddit": {
+    "enabled": true,
+    "comment": "Public .json endpoints, no auth needed. /rising is Reddit's pre-trend signal — already filters for inflection.",
+    "subreddits": [
+      { "name": "LocalLLaMA",        "weight": 2.5 },
+      { "name": "MachineLearning",   "weight": 2.2 },
+      { "name": "OpenAI",            "weight": 2.0 },
+      { "name": "singularity",       "weight": 1.6 },
+      { "name": "artificial",        "weight": 1.5 },
+      { "name": "LangChain",         "weight": 1.5 },
+      { "name": "ChatGPTPro",        "weight": 1.5 },
+      { "name": "StableDiffusion",   "weight": 1.6 }
+    ],
+    "endpoints": ["rising", "new"],
+    "minScoreForRising": 5,
+    "minScoreForNew": 3,
+    "freshnessHours": 12
+  },
+
+  "hackernews": {
+    "enabled": true,
+    "comment": "HN newest with score velocity catches papers/tools 30-60 min before front page. Filter for AI keywords.",
+    "minPoints": 5,
+    "freshnessHours": 8,
+    "aiKeywords": [
+      "llm", "gpt", "claude", "anthropic", "openai", "gemini", "deepmind",
+      "transformer", "diffusion", "embedding", "rag", "agent", "agentic",
+      "fine-tun", "finetune", "model", "neural", "ml ", "machine learning",
+      "ai ", "llama", "mistral", "qwen", "deepseek", "kimi"
+    ]
+  },
+
+  "github": {
+    "enabled": true,
+    "comment": "Trending repos via search API. Token gives 5000 req/hr. Watch specific orgs for fresh releases.",
+    "useToken": true,
+    "tokenEnv": "GITHUB_TOKEN",
+    "queries": [
+      "topic:llm stars:>20 created:>{since}",
+      "topic:ai-agents stars:>15 created:>{since}",
+      "topic:agentic stars:>10 created:>{since}",
+      "topic:rag stars:>10 created:>{since}",
+      "topic:llm-agent stars:>10 created:>{since}",
+      "topic:generative-ai stars:>15 created:>{since}"
+    ],
+    "watchedOrgs": [
+      "anthropics", "openai", "google-deepmind", "huggingface",
+      "meta-llama", "deepseek-ai", "ggml-org", "vllm-project",
+      "langchain-ai", "microsoft", "modal-labs", "replicate",
+      "lmstudio-ai", "Mozilla-Ocho"
+    ],
+    "lookbackDays": 4,
+    "starInflectionMultiplier": 3.0
+  },
+
+  "producthunt": {
+    "enabled": true,
+    "comment": "Daily AI launches. RSS-based, no key needed.",
+    "url": "https://www.producthunt.com/feed?category=artificial-intelligence",
+    "freshnessHours": 36
+  },
+
+  "huggingface": {
+    "enabled": true,
+    "comment": "Public Spaces API. trendingScore is HF's own velocity signal — perfect 'about to blow up' indicator. likes catches the absolute leaders.",
+    "sortKeys": ["trendingScore", "likes"],
+    "minLikes": 3,
+    "minTrending": 5,
+    "freshnessHours": 720
+  },
+
+  "_discovery_doc": "Discovery filters reject items that have already crossed the popularity threshold. The whole point is to surface things BEFORE they become trends. Tune these if too few/many items pass.",
+  "discovery": {
+    "enabled": true,
+    "maxAbsoluteEngagement": {
+      "github":      3000,
+      "hackernews":  400,
+      "huggingface": 400,
+      "reddit":      1500,
+      "producthunt": 99999
+    },
+    "maxAgeDays": {
+      "github":      45,
+      "hackernews":  1.5,
+      "huggingface": 90,
+      "reddit":      0.75,
+      "producthunt": 3,
+      "x":           0.5
+    },
+    "minGrowthRate": {
+      "github":      1.5,
+      "huggingface": 0.3
+    },
+    "blockedRepos": [
+      "anthropics/claude-code",
+      "openai/codex",
+      "openai/openai-cookbook",
+      "openai/openai-python",
+      "openai/openai-node",
+      "openai/openai-agents-js",
+      "openai/openai-agents-python",
+      "openai/plugins",
+      "ggml-org/llama.cpp",
+      "ggml-org/whisper.cpp",
+      "ggml-org/ggml",
+      "vllm-project/vllm",
+      "huggingface/diffusers",
+      "huggingface/transformers",
+      "huggingface/trl",
+      "langchain-ai/langgraph",
+      "langchain-ai/langchain",
+      "microsoft/vscode",
+      "microsoft/onnxruntime",
+      "microsoft/Windows-driver-samples",
+      "microsoft/windows-rs",
+      "microsoft/react-native-windows",
+      "microsoft/BuildXL",
+      "google-deepmind/mujoco",
+      "google-deepmind/mujoco_menagerie"
+    ]
+  },
+
+  "scoring": {
+    "_doc": "Scoring favors growth-rate over absolute size. absoluteEngagement weight is now negative — being already-huge counts AGAINST you in discovery mode.",
+    "weights": {
+      "velocity":      1.5,
+      "growthRate":    1.2,
+      "novelty":       1.0,
+      "authority":     0.6,
+      "crossSource":   1.4,
+      "absoluteEngagement": -0.4
+    },
+    "noveltyHalfLifeHours": 12,
+    "breakingThreshold": 1.5,
+    "crossSourceWindowMinutes": 180,
+    "decayHalfLifeHours": 6,
+    "authorityCap": 2.5
+  },
+
+  "output": {
+    "topN": 80,
+    "categories": {
+      "tool": ["github", "producthunt", "show hn"],
+      "paper": ["arxiv", "research"],
+      "news": ["news", "announcement"],
+      "tweet": ["x"],
+      "discussion": ["reddit", "ask hn"]
+    }
+  }
+}

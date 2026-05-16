@@ -48,7 +48,7 @@ const PLACEHOLDER: Record<Lang, string> = {
 const LABELS = {
   ar: {
     question: "أنت",
-    answer: "نظام علي",
+    answer: "النظام",
     thinking: "يفكر…",
     send: "ارسل",
     sending: "يكتب…",
@@ -355,13 +355,13 @@ export default function AskTerminal({ lang }: { lang: Lang }) {
             className="font-semibold leading-[1.05] text-ink-100 lg:col-span-8"
             style={{ fontSize: "clamp(2rem, 5vw, 4rem)" }}
           >
-            {isAr ? "تكلّم مع نظامي." : "Talk to my system."}
+            {isAr ? "محادثة مباشرة." : "Direct conversation."}
           </motion.h2>
         </div>
         <p className="mt-3 max-w-2xl text-sm text-ink-500 sm:text-base">
           {isAr
-            ? "ذكاء اصطناعي مدرّب على صوته. اضغط 🔊 على أي رد عشان تسمعه. المحادثة محفوظة لما ترجع."
-            : "An AI trained on his voice. Tap 🔊 on any reply to hear it. The conversation persists when you come back."}
+            ? "نظام محادثة مدرّب على طريقة العمل والأرقام الفعلية. اسأل عن المشاريع، التكلفة، الاستراتيجية. اضغط 🔊 على أي رد عشان تسمعه. المحادثة محفوظة لما ترجع."
+            : "A chat trained on the actual workflow and numbers. Ask about projects, cost, strategy. Tap 🔊 on any reply to hear it. The conversation persists when you come back."}
         </p>
 
         <motion.div

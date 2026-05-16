@@ -87,6 +87,12 @@
   }
   .pulse-soft { animation: pulse-soft 8s ease-in-out infinite; }
 
+  @keyframes bounce-slow {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(4px); }
+  }
+  .animate-bounce-slow { animation: bounce-slow 2.4s ease-in-out infinite; }
+
   .horizon-line {
     background: linear-gradient(90deg, transparent 0%, var(--color-ember-500) 30%, var(--color-tide-500) 70%, transparent 100%);
     height: 1px;

@@ -47,7 +47,7 @@ if [ "$FRONTEND_ONLY" = "0" ]; then
   cp server/server.mjs server/package.json "$DEPLOY/"
   cp -R server/prompts/. "$DEPLOY/prompts/"
   cp -R server/turjuman/. "$DEPLOY/turjuman/"
-  cp scripts/radar-crawl.mjs scripts/radar-translate.mjs scripts/radar-config.json "$DEPLOY/scripts/"
+  cp scripts/radar-crawl.mjs scripts/radar-translate.mjs scripts/radar-judge.mjs scripts/radar-config.json scripts/turjuman-cleanup.mjs "$DEPLOY/scripts/"
 fi
 
 # 3. VPS — rsync everything that changed
@@ -63,10 +63,11 @@ if [ "$SKIP_VPS" = "0" ]; then
       "$DEPLOY/" "$VPS_HOST:$VPS_PATH/"
   fi
 
-  echo "→ chown + PM2 restart"
+  echo "→ chown + PM2 restart (sourcing .env so new keys land in process env)"
   ssh "$VPS_HOST" "chown -R alkinani:alkinani $VPS_PATH && \
     sudo -u alkinani bash -lc 'source /home/alkinani/.nvm/nvm.sh; nvm use 22 >/dev/null; \
-    cd $VPS_PATH && pm2 restart alkinani --update-env 2>&1 | tail -3'"
+    cd $VPS_PATH && set -a && source .env && set +a && \
+    pm2 restart alkinani --update-env 2>&1 | tail -3'"
 fi
 
 # 4. Cloudflare Pages — wrangler deploy

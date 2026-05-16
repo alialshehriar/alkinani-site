@@ -4,7 +4,7 @@ import Tools from "./components/Tools";
 import TurjumanApp from "./components/turjuman/TurjumanApp";
 import Hero from "./components/Hero";
 import Origin from "./components/Origin";
-import Radar from "./components/Radar";
+import ToolsLab from "./components/ToolsLab";
 import Ventures from "./components/Ventures";
 import SectionBridge from "./components/SectionBridge";
 import Method from "./components/Method";
@@ -64,13 +64,13 @@ export default function App() {
 
         <Ventures lang={lang} />
         <SectionBridge
-          to="#radar"
+          to="#tools"
           lang={lang}
-          ar="رادار AI — إشارات تُرصد قبل ما تنتشر"
-          en="AI radar — signals caught before the trend"
+          ar="أدوات شغّالة — ترجمان والرادار"
+          en="Working tools — Turjuman and Radar"
         />
 
-        <Radar lang={lang} />
+        <ToolsLab lang={lang} />
         <SectionBridge
           to="#lab"
           lang={lang}

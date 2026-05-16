@@ -9,9 +9,9 @@ import {
 
 const COPY = {
   ar: {
-    eyebrow: "/ ملك التحدي",
-    title: "ملك أبطال علي الكناني",
-    sub: "مجموع نقاطك من الألعاب الثلاث: Tech Sprint + Pulse + Reflex Lab. الأعلى مجموعاً يجلس على العرش.",
+    eyebrow: "/ صدارة الأبطال",
+    title: "بطل التحدّي الثلاثي",
+    sub: "اجمع نقاطك من الألعاب الثلاث: Tech Sprint + Pulse + Reflex Lab. صاحب أعلى مجموع يقعد على العرش — لين يطيحه غيره.",
     throneEmpty: "العرش فاضٍ. أول واحد يكمل الألعاب الثلاث يحتله.",
     challenger: (n: string) => `تحدّى ${n}`,
     crown: "👑",
@@ -26,13 +26,13 @@ const COPY = {
     moreToGo: "اكمل الألعاب الباقية",
     fullTrio: "كملت الثلاث 🔥",
     refresh: "تحديث",
-    cta: "العب الثلاث وكن الملك القادم",
+    cta: "العب الثلاث واقعد على العرش",
     footer: (n: number) => `${n} لاعب يتنافسون`,
   },
   en: {
-    eyebrow: "/ champion",
-    title: "King of Alkinani's Champions",
-    sub: "Sum of your best scores across all three games: Tech Sprint + Pulse + Reflex Lab. Highest combined score sits on the throne.",
+    eyebrow: "/ leaderboard",
+    title: "Triple-Challenge Champion",
+    sub: "Add up your scores from the three games: Tech Sprint + Pulse + Reflex Lab. Highest combined score holds the throne — until someone topples them.",
     throneEmpty: "Throne is empty. First to complete all three takes it.",
     challenger: (n: string) => `Challenge ${n}`,
     crown: "👑",

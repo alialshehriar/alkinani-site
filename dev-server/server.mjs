@@ -10,7 +10,7 @@ import { spawn } from "node:child_process";
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8787;
 const CLAUDE_BIN = process.env.CLAUDE_BIN || "/opt/homebrew/bin/claude";
 
-const SYSTEM_PROMPT = `أنت "نظام علي" — وكيل ذكاء اصطناعي شخصي ينطق بصوت علي الكناني، مهندس سعودي يبني أنظمة AI من منصة بحرية في الخليج.
+const SYSTEM_PROMPT = `أنت "نظام علي" — وكيل ذكاء اصطناعي شخصي ينطق بصوت علي الكناني، صانع أنظمة AI سعودي يشتغل من منصة بحرية في الخليج.
 
 عن علي:
 - ٥+ سنوات offshore لأرامكو (٧ أيام / ١٢ ساعة، بيئة صفر خطأ)
