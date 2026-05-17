@@ -1,16 +1,21 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import Nav from "./components/Nav";
-import Tools from "./components/Tools";
-import TurjumanApp from "./components/turjuman/TurjumanApp";
+// Turjuman and the Tools index are full-screen routes — they replace the
+// scroll narrative entirely. Lazy-loading keeps them out of the initial
+// home bundle (saves ~150kB pre-minify on the / route, the most-hit page).
+const Tools = lazy(() => import("./components/Tools"));
+const TurjumanApp = lazy(() => import("./components/turjuman/TurjumanApp"));
 import Hero from "./components/Hero";
 import Origin from "./components/Origin";
 import ToolsLab from "./components/ToolsLab";
 import Ventures from "./components/Ventures";
 import SectionBridge from "./components/SectionBridge";
 import Method from "./components/Method";
-import AskTerminal from "./components/AskTerminal";
-import PlayLab from "./components/PlayLab";
-import Throne from "./components/Throne";
+// Heavy below-the-fold sections — lazy so the first paint doesn't pay
+// for the leaderboard, the 3 mini-games, and the chat terminal.
+const AskTerminal = lazy(() => import("./components/AskTerminal"));
+const PlayLab = lazy(() => import("./components/PlayLab"));
+const Throne = lazy(() => import("./components/Throne"));
 import Stack from "./components/Stack";
 import Contact from "./components/Contact";
 import Footer from "./components/Footer";
@@ -34,14 +39,24 @@ export default function App() {
     try { localStorage.setItem("alk-lang", lang); } catch { /* ignore */ }
   }, [lang]);
 
-  // Standalone routes — bypass the scroll-narrative shell.
+  // Standalone routes — bypass the scroll-narrative shell. Each gets its
+  // own Suspense boundary with a minimal full-screen fallback so the page
+  // doesn't pop in late on slow networks.
   if (typeof window !== "undefined") {
     const path = window.location.pathname;
     if (path === "/tools/turjuman" || path.startsWith("/tools/turjuman/")) {
-      return <TurjumanApp />;
+      return (
+        <Suspense fallback={<RouteSpinner />}>
+          <TurjumanApp />
+        </Suspense>
+      );
     }
     if (path === "/tools" || path === "/tools/") {
-      return <Tools lang={lang} />;
+      return (
+        <Suspense fallback={<RouteSpinner />}>
+          <Tools lang={lang} />
+        </Suspense>
+      );
     }
   }
 
@@ -78,7 +93,9 @@ export default function App() {
           en="Test your decision speed — 3 games"
         />
 
-        <PlayLab lang={lang} />
+        <Suspense fallback={<SectionSkeleton />}>
+          <PlayLab lang={lang} />
+        </Suspense>
         <SectionBridge
           to="#throne"
           lang={lang}
@@ -86,7 +103,9 @@ export default function App() {
           en="See the leaderboard — try to topple it"
         />
 
-        <Throne lang={lang} />
+        <Suspense fallback={<SectionSkeleton />}>
+          <Throne lang={lang} />
+        </Suspense>
         <SectionBridge
           to="#ask"
           lang={lang}
@@ -94,7 +113,9 @@ export default function App() {
           en="Direct chat — ask anything"
         />
 
-        <AskTerminal lang={lang} />
+        <Suspense fallback={<SectionSkeleton />}>
+          <AskTerminal lang={lang} />
+        </Suspense>
         <SectionBridge
           to="#method"
           lang={lang}
@@ -111,4 +132,20 @@ export default function App() {
       <EasterEgg lang={lang} />
     </div>
   );
+}
+
+function RouteSpinner() {
+  return (
+    <div
+      role="status"
+      aria-label="جارٍ التحميل"
+      className="grid min-h-screen w-full place-items-center bg-ink-950"
+    >
+      <div className="h-6 w-6 animate-spin rounded-full border-2 border-ink-700 border-t-ember-400" />
+    </div>
+  );
+}
+
+function SectionSkeleton() {
+  return <div aria-hidden className="h-[60vh] w-full bg-ink-950" />;
 }
