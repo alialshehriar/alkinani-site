@@ -132,7 +132,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     const idea = (body.idea || "").trim();
     if (!idea) return jsonError("idea required", 400);
     if (idea.length > 600) return jsonError("idea too long", 400);
-    let critique = "";
+    let critique: string;
     try { critique = await aiText(env, SYSTEM_CRITIC, idea, 220); }
     catch (e) { return jsonError(`ai error: ${String(e).slice(0, 80)}`, 502); }
     if (!critique) {
@@ -154,7 +154,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       ? `الفكرة: ${idea}\n\nالاعتراض: ${critique}\n\nرد المؤسس: ${rebuttal}\n\nاحكم.`
       : `Idea: ${idea}\n\nObjection: ${critique}\n\nFounder rebuttal: ${rebuttal}\n\nJudge.`;
 
-    let raw = "";
+    let raw: string;
     try { raw = await aiText(env, SYSTEM_JUDGE, userMsg, 400); }
     catch (e) { return jsonError(`ai error: ${String(e).slice(0, 80)}`, 502); }
 

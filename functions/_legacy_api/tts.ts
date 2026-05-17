@@ -142,6 +142,7 @@ async function edgeTTS(
   text: string,
   lang: "ar" | "en",
   _voiceOverride?: string,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept for API parity; gender is selected via voiceOverride upstream
   _gender: "male" | "female" = "male",
 ): Promise<Uint8Array> {
   const tl = lang === "ar" ? "ar" : "en";

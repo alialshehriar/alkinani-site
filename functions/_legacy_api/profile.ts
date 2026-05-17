@@ -162,7 +162,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     ? `قراراتك السبعة:\n${picks.map((p, i) => `${i + 1}. ${p.prompt}\n   اخترت: ${p.choice}  (axis=${p.axis}, side=${p.side})`).join("\n")}\n\nالميل بالمحاور: ${JSON.stringify(leans)}\n\nاكتب القراءة.`
     : `your 7 picks:\n${picks.map((p, i) => `${i + 1}. ${p.prompt}\n   chose: ${p.choice}  (axis=${p.axis}, side=${p.side})`).join("\n")}\n\nlean per axis: ${JSON.stringify(leans)}\n\nwrite the reading.`;
 
-  let raw = "";
+  let raw: string;
   try {
     raw = await aiText(env, lang === "ar" ? SYSTEM_AR : SYSTEM_EN, userMsg, 700);
   } catch (e) {
