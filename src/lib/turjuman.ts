@@ -302,6 +302,40 @@ export function jobErrorMessage(err: unknown): string {
   if (msg.includes("url_private_ip_blocked")) return "الرابط يشير لعنوان خاص.";
   if (msg.includes("url_dns_resolve_failed")) return "تعذر الوصول للرابط.";
   if (msg.includes("invalid_target_lang")) return "اللغة الهدف غير مدعومة.";
+  if (msg.includes("invalid_source_lang")) return "اللغة المصدر غير مدعومة.";
+  if (msg.includes("same_source_target")) return "اللغة المصدر واللغة الهدف ما يصيرون نفس الشيء.";
+  if (msg.includes("invalid_subtitle_size")) return "حجم الترجمة غير صحيح.";
   if (msg.includes("session_expired")) return "انتهت الجلسة. سجّل الدخول مرة أخرى.";
   return "حدث خطأ. حاول مرة أخرى.";
+}
+
+/**
+ * Translates a *pipeline* failure string (the one stored in turjuman_jobs.
+ * error_message after the worker rejects) into a user-facing Arabic line.
+ *
+ * Different signature from jobErrorMessage above (which handles errors
+ * thrown synchronously by the create-job endpoint). This one is keyed to
+ * the strings the worker throws + the error patterns ffmpeg/yt-dlp/Gemini
+ * surface verbatim into the DB row.
+ */
+export function jobFailureMessage(errorMessage: string | null | undefined): string {
+  if (!errorMessage) return "تعذّرت الترجمة.";
+  const m = errorMessage.toLowerCase();
+  if (m.startsWith("silent_audio") || m.includes("silent_audio"))
+    return "الفيديو ما فيه صوت واضح. تأكد إن المقطع فيه كلام مسموع.";
+  if (m.includes("sign in to confirm") || m.includes("youtube") && m.includes("bot"))
+    return "يوتيوب يحجب التنزيل من خوادمنا حالياً. جرّب رابط ثاني أو ارفع الفيديو مباشرة.";
+  if (m.includes("instagram"))
+    return "إنستجرام يحجب تنزيل هذا المقطع. جرّب رابط من يوتيوب أو X أو ارفع الملف مباشرة.";
+  if (m.startsWith("too_long:"))
+    return "المقطع أطول من ٣٠ دقيقة. قسّمه واطلب ترجمة كل جزء على حدة.";
+  if (m.includes("audio_extract_failed"))
+    return "تعذّر استخراج الصوت من الفيديو. تأكد إن الملف غير معطوب.";
+  if (m.includes("gemini_no_cues") || m.includes("gemini_chunk_failed"))
+    return "ما قدر النموذج يستخرج ترجمة من هذا المقطع. غالباً صوت غير واضح أو لغة غير مدعومة.";
+  if (m.includes("gemini_empty_response") || m.includes("blockreason"))
+    return "النموذج رفض ترجمة هذا المقطع. جرّب مقطع آخر.";
+  if (m.includes("ffmpeg burn failed"))
+    return "تعذّرت كتابة الترجمة على الفيديو. حاول مرة ثانية.";
+  return "تعذّرت الترجمة. حاول مرة ثانية أو راسلنا لو تكرر.";
 }

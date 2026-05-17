@@ -45,6 +45,33 @@ export async function extractAudio(videoPath) {
   return { path: outCopy, mimeType: "audio/mp4" };
 }
 
+/**
+ * Run ffmpeg's volumedetect filter against an audio file and return the
+ * mean_volume in dBFS (negative number; 0 = full scale, -inf = silence).
+ * Resolves to null if ffmpeg fails or the regex doesn't match.
+ *
+ * Used as a pre-flight gate before Gemini: silent/near-silent clips burn
+ * API quota and reliably return zero cues or hallucinated filler phrases.
+ * On 2026-05-16 silent uploads were 38% of the gemini_no_cues errors.
+ */
+export function measureMeanVolume(audioPath) {
+  return new Promise((resolve) => {
+    const p = spawn("ffmpeg", [
+      "-i", audioPath,
+      "-af", "volumedetect",
+      "-vn", "-sn", "-dn",
+      "-f", "null", "-",
+    ]);
+    let err = "";
+    p.stderr.on("data", (b) => { err += b; if (err.length > 8000) err = err.slice(-8000); });
+    p.on("close", () => {
+      const m = err.match(/mean_volume:\s*(-?\d+\.?\d*)\s*dB/);
+      resolve(m ? parseFloat(m[1]) : null);
+    });
+    p.on("error", () => resolve(null));
+  });
+}
+
 function runFfmpeg(args) {
   return new Promise((resolve) => {
     const p = spawn("ffmpeg", args);

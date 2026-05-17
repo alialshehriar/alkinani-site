@@ -176,14 +176,32 @@ export default function JobRow({ job, onTerminal }: Props) {
 }
 
 function friendlyError(raw: string): string {
-  const m = /^too_long:(\d+)min>(\d+)min/.exec(raw);
-  if (m) return `الفيديو ${m[1]} دقيقة، الحد الأقصى ${m[2]} دقيقة.`;
+  const tooLong = /^too_long:(\d+)min>(\d+)min/.exec(raw);
+  if (tooLong) return `الفيديو ${tooLong[1]} دقيقة، الحد الأقصى ${tooLong[2]} دقيقة.`;
   if (raw.startsWith("too_large:")) return "الفيديو حجمه أكبر من ٥٠٠ ميغا.";
-  if (raw.includes("Sign in to confirm")) return "هذا المصدر يحجبنا حالياً (يحتاج تسجيل دخول). جرّب رابط من Vimeo, TED, X (تويتر), أو TikTok.";
+
+  // Silent / music-only / on-screen-text-only videos. Pre-flight gate added
+  // 2026-05-17 — was the single biggest source of gemini_no_cues errors.
+  const silent = /^silent_audio:(-?\d+\.?\d*)dB/.exec(raw);
+  if (silent) return `الفيديو ما فيه صوت واضح (${silent[1]} dB). تأكد إن المقطع فيه كلام مسموع.`;
+  if (raw.startsWith("silent_audio")) return "الفيديو ما فيه صوت واضح. تأكد إن المقطع فيه كلام مسموع.";
+
+  if (raw.includes("Sign in to confirm") || /youtube.*bot/i.test(raw))
+    return "يوتيوب يحجب التنزيل من خوادمنا حالياً. جرّب رابط من Vimeo / TED / X / TikTok أو ارفع الملف مباشرة.";
+  if (raw.toLowerCase().includes("instagram"))
+    return "إنستجرام يحجب تنزيل هذا المقطع. جرّب رابط من يوتيوب أو X أو ارفع الملف مباشرة.";
   if (raw.includes("HTTP Error 403")) return "المصدر يرفض التحميل (403).";
   if (raw.startsWith("url_")) return "الرابط غير صالح أو غير مدعوم.";
+  if (raw.startsWith("audio_extract_failed"))
+    return "تعذّر استخراج الصوت من الفيديو. تأكد إن الملف غير معطوب.";
+  if (raw.startsWith("gemini_no_cues") || raw.includes("gemini_chunk_failed"))
+    return "ما قدر النموذج يستخرج ترجمة من هذا المقطع. غالباً صوت غير واضح أو لغة غير مدعومة.";
+  if (raw.startsWith("gemini_empty_response") || raw.toLowerCase().includes("blockreason"))
+    return "النموذج رفض ترجمة هذا المقطع. جرّب مقطع آخر.";
   if (raw.startsWith("gemini_")) return "تعذّر الترجمة عبر Gemini. حاول بعد قليل.";
   if (raw.startsWith("yt-dlp")) return "تعذّر الوصول لمحتوى الفيديو. تأكد أن الرابط عام ومتاح.";
   if (raw.includes("cobalt")) return "تعذّر الوصول للمصدر — جرّب رابط ثاني أو ارفع الملف من جهازك.";
+  if (raw.includes("ffmpeg burn failed"))
+    return "تعذّرت كتابة الترجمة على الفيديو. حاول مرة ثانية.";
   return raw.slice(0, 200);
 }

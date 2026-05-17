@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import { validateUrl, probe, download } from "./yt-dlp.js";
 import { translateMedia, translateChunked } from "./gemini.js";
 import { cuesToSrt } from "./srt.js";
-import { burnSubtitles, extractAudio, chunkAudio } from "./ffmpeg.js";
+import { burnSubtitles, extractAudio, chunkAudio, measureMeanVolume } from "./ffmpeg.js";
 import { incrementAnonUsed } from "./db.js";
 import { emitJobEvent } from "./job-events.js";
 
@@ -165,6 +165,29 @@ async function runJob(job, jobsRoot, geminiApiKey, log) {
   } catch (e) {
     log(`[turjuman] audio extract failed (${String(e?.message || e).slice(0, 80)}) — falling back to full video`);
     audio = null;
+  }
+
+  // Pre-flight silent-audio gate. ~38% of historical gemini_no_cues errors
+  // turned out to be silent or music-only clips (background-music vlogs,
+  // typing tutorials, gaming highlights with FX-only audio). Gemini happily
+  // burns a paid token round-trip on these and returns either zero cues or
+  // a single hallucinated filler line. Reject up-front with a clear error
+  // the UI can render in Arabic.
+  //
+  // -45 dBFS is the empirical floor below which our gemini_no_cues rate
+  // exceeded 90%. Skip the gate when ffmpeg can't read the audio at all
+  // (measureMeanVolume returns null) — don't compound an extraction failure
+  // with a false-positive silence reject.
+  if (audio?.path) {
+    const meanDb = await measureMeanVolume(audio.path);
+    if (meanDb !== null && meanDb < -45) {
+      await fs.unlink(audio.path).catch(() => {});
+      await fs.unlink(videoPath).catch(() => {});
+      throw new Error(`silent_audio:${meanDb.toFixed(1)}dB`);
+    }
+    if (meanDb !== null) {
+      log(`[turjuman] audio mean volume ${meanDb.toFixed(1)} dBFS (gate at -45)`);
+    }
   }
 
   log(`[turjuman] translating ${job.id} via Gemini…`);
