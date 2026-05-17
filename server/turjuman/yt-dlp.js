@@ -133,19 +133,31 @@ function shouldTryCobalt(errMsg) {
 }
 
 /**
- * Hit Cobalt's /api/json with the URL, follow whatever it returns:
- *   - status="redirect" / "tunnel" / "stream" → fetch from `url` and pipe to disk
- *   - status="error" → throw with the reason
- * Cobalt's hosted API rate-limits aggressively; ops can override
- * COBALT_BASE_URL with a self-hosted instance.
+ * Hit Cobalt with the URL, follow whatever it returns:
+ *   - status="redirect" / "tunnel" / "local-processing" → fetch the returned
+ *     URL and pipe to disk.
+ *   - status="error" → throw with the reason.
+ *
+ * The Cobalt v7 hosted API (api.cobalt.tools/api/json) was permanently shut
+ * down 2024-11-11. v10 uses a different shape: POST to `<base>/` with
+ * Authorization header for self-hosted instances. Without a working
+ * `COBALT_BASE_URL` env var pointed at a self-hosted v10 instance, this
+ * function fails-fast — let yt-dlp's original error bubble up untouched so
+ * the user gets the right message.
  */
 async function cobaltDownload(url, outPath) {
-  const base = process.env.COBALT_BASE_URL || "https://api.cobalt.tools";
-  const r = await fetch(`${base}/api/json`, {
+  const base = process.env.COBALT_BASE_URL;
+  if (!base) {
+    // Cobalt is opt-in; without a configured instance we don't try.
+    throw new Error("cobalt not configured (set COBALT_BASE_URL)");
+  }
+  const apiKey = process.env.COBALT_API_KEY;
+  const r = await fetch(`${base.replace(/\/+$/, "")}/`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "Accept": "application/json",
+      ...(apiKey ? { Authorization: `Api-Key ${apiKey}` } : {}),
     },
     body: JSON.stringify({
       url,

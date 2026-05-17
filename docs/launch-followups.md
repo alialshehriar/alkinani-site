@@ -172,3 +172,142 @@ ssh root@72.62.116.92 '
 `server/turjuman/ffmpeg.js` already lists `IBM Plex Sans Arabic,Tajawal,Noto
 Sans Arabic` — libass/fontconfig will start preferring whichever face is
 installed first. **No code change** is needed after the install.
+
+---
+
+## 4. YouTube bot-block fallback (Cobalt + cookies)
+
+YouTube has been datacenter-blocking yt-dlp on the VPS for ~22 of every
+130 jobs (2026-04 to 2026-05 sample). Cobalt v7's hosted API was shut
+down 2024-11-11, so our previous default of `api.cobalt.tools/api/json`
+silently fails with `{"status":"error","text":"the cobalt v7 api has been
+shut down…"}`.
+
+`server/turjuman/yt-dlp.js` now **fails-fast** when `COBALT_BASE_URL`
+isn't set, so yt-dlp's original error message ("Sign in to confirm
+you're not a bot") reaches the user instead of being masked.
+
+Two ways forward, in increasing order of effort:
+
+### 4A. Cookie file (cheap, 80% effective)
+
+Export YouTube cookies from a logged-in browser on your Mac into the
+yt-dlp-supported Netscape format, copy to VPS, set
+`YT_COOKIES_PATH=/home/alkinani/.../yt-cookies.txt`.
+
+```bash
+# On Mac (one-time)
+brew install yt-dlp
+yt-dlp --cookies-from-browser chrome --cookies ~/Downloads/yt-cookies.txt \
+  --skip-download "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+
+# Verify the file has YouTube entries
+grep -c "youtube.com" ~/Downloads/yt-cookies.txt   # should be > 30
+
+# Ship to VPS
+scp ~/Downloads/yt-cookies.txt root@72.62.116.92:/home/alkinani/htdocs/alkinani.live/yt-cookies.txt
+ssh root@72.62.116.92 '
+  chown alkinani:alkinani /home/alkinani/htdocs/alkinani.live/yt-cookies.txt &&
+  chmod 600 /home/alkinani/htdocs/alkinani.live/yt-cookies.txt &&
+  echo "YT_COOKIES_PATH=/home/alkinani/htdocs/alkinani.live/yt-cookies.txt" >> /home/alkinani/htdocs/alkinani.live/.env &&
+  sudo -u alkinani bash -lc "
+    source /home/alkinani/.nvm/nvm.sh; nvm use 22 >/dev/null;
+    cd /home/alkinani/htdocs/alkinani.live;
+    set -a && source .env && set +a;
+    pm2 restart alkinani --update-env
+  "
+'
+```
+
+Cookies expire after ~30 days for unused accounts — refresh quarterly.
+
+### 4B. Self-host Cobalt v10 (covers everything yt-dlp can't)
+
+Docker one-liner on VPS:
+
+```bash
+ssh root@72.62.116.92 '
+  mkdir -p /opt/cobalt && cd /opt/cobalt && \
+  cat > docker-compose.yml <<YAML
+services:
+  cobalt-api:
+    image: ghcr.io/imputnet/cobalt:10
+    init: true
+    restart: unless-stopped
+    container_name: cobalt-api
+    ports:
+      - "127.0.0.1:9000:9000/tcp"
+    environment:
+      API_URL: "https://alkinani.live/cobalt/"
+      API_NAME: "alkinani"
+    labels:
+      - com.centurylinklabs.watchtower.scope=cobalt
+YAML
+  docker compose up -d
+'
+```
+
+Then add an nginx reverse proxy at `/cobalt/` → `127.0.0.1:9000` and
+set:
+
+```bash
+echo "COBALT_BASE_URL=http://127.0.0.1:9000" >> /home/alkinani/htdocs/alkinani.live/.env
+pm2 restart alkinani --update-env
+```
+
+Optional: `COBALT_API_KEY=...` if you enable the key-protected mode in
+Cobalt's environment.
+
+---
+
+## 5. Cloudflare Pages mirror — alkinani-site.pages.dev
+
+Legacy URL Ali published on X early. Drifts out of sync with
+`alkinani.live` because every recent `scripts/deploy-all.sh` run has
+been invoked with `--skip-pages`.
+
+To bring them back in lockstep:
+
+```bash
+# One-time on Mac
+CLOUDFLARE_API_TOKEN=<token>  # https://dash.cloudflare.com/profile/api-tokens
+                              # → "Edit Cloudflare Workers" template
+export CLOUDFLARE_API_TOKEN
+# Then a normal full deploy
+bash scripts/deploy-all.sh
+```
+
+Or browser-flow:
+```bash
+npx wrangler login         # opens browser → OAuth grant
+bash scripts/deploy-all.sh # picks up the saved creds
+```
+
+If Pages will stay legacy/decommissioned, edit `scripts/deploy-all.sh`
+to default `SKIP_PAGES=1` and drop the parity check that prints the
+"⚠ bundles differ" line on every run.
+
+---
+
+## 6. Lemon Squeezy → live mode (Go/No-Go)
+
+**Status**: test mode, end-to-end verified. Zero real money has moved.
+The `scripts/flip-lemon-to-live.sh` helper is staged but unused.
+
+Pre-flight checks before running the flip:
+
+- [ ] Lemon dashboard: products toggled to live (or recreated without
+  test mode). Note their new variant IDs.
+- [ ] Webhook recreated in live mode (test_mode:false), new secret in hand.
+- [ ] Run `scripts/flip-lemon-to-live.sh` with: api key, webhook secret,
+  3 new variant IDs (starter/pro/studio).
+- [ ] Verify `GET /api/turjuman/payments/tiers` shows the live variants.
+- [ ] Place a real $1 test purchase, verify webhook fires + credits land
+  in the test account's `credits_balance`.
+- [ ] Refund the test purchase from Lemon dashboard, verify reversal
+  posts via `reverseCreditsFromLemonOrder`.
+
+**Do not bulk-flip without these checks**: the live → test webhook
+swap is one-way unless you keep both webhooks active during the
+cutover, and a refund that doesn't get a corresponding reversal will
+leave the user holding credits Lemon already clawed back.
